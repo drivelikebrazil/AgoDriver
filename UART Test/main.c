@@ -4,11 +4,13 @@
 #include <stdlib.h>
 #include <dsp.h>
 
-_FOSCSEL(FNOSC_FRC)
-_FOSC(POSCMD_NONE & OSCIOFNC_ON)
-_FWDT(FWDTEN_OFF)
-_FICD(ICS_PGD1 & JTAGEN_OFF)
+//Set up processor registers
+_FOSCSEL(FNOSC_FRC)					//Use built in oscillator
+_FOSC(POSCMD_NONE & OSCIOFNC_ON)	//Use Oscillator pins as I/O pins is on
+_FWDT(FWDTEN_OFF)					//Turn watchdog timer off
+_FICD(ICS_PGD1 & JTAGEN_OFF)		//Set to programming interface 1 and no JTAG
 
+//Function definitions
 unsigned char UART1DataReady(void);
 unsigned char UART1Data(void);
 void UART1AddByte(char c);
@@ -20,11 +22,13 @@ void PositionCalculation(void);
 void setMotorACoeffs(float kP, float kI, float kD);
 void setMotorBCoeffs(float kP, float kI, float kD);
 
-volatile int velocity;
-int Pos[2] = {0,0};
-tPID motorAPid;
-tPID motorBPid;
+//Begin motor control variables
+volatile int velocity;				//velocity measurement
+int Pos[2] = {0,0};					//last and present position
+tPID motorAPid;						//PID data structure for Motor A
+tPID motorBPid;						//PID data structure for Motor B
 
+//PID variable definitions
 fractional mAabcCoeffs[3] __attribute__ ((space(xmemory)));		//((section (".xbss, bss, xmemory")));
 fractional mBabcCoeffs[3] __attribute__ ((space(xmemory)));		//((section (".xbss, bss, xmemory")));
 fractional mAcontHist[3] __attribute__ 	((space(ymemory)));		//((section (".ybss, bss, ymemory")));
@@ -33,7 +37,6 @@ fractional kCoeffsA[] = {0.7,0.2,0};
 fractional kCoeffsB[] = {0.7,0.2,0};
 
 int main(void){
-	char c;
 	AD1PCFGL = 0xFFFF;  //make all pins digital
 
 	//Initialize PID
@@ -49,6 +52,9 @@ int main(void){
 	PIDCoeffCalc(&kCoeffsA[0], &motorAPid);
 	PIDCoeffCalc(&kCoeffsB[0], &motorBPid);
 	
+	/*
+		We may use this commented out section later to increase the speed, leave it here!!
+	*/
 	//setup internal clock for 80MHz/40MIPS
 	//7.37/2=3.685*43=158.455/2=79.2275
 	//CLKDIVbits.PLLPRE=0; 	// PLLPRE (N2) 0=/2 
@@ -98,84 +104,60 @@ int main(void){
 	PWM_CONFbits.PEN2L = 0; 	// PWM Low pin disabled 
 	PWM_CONFbits.PEN1L = 0; 	// PWM Low pin disabled
 
-	MTR_A_DUTY_CYCLE = 408;	//Set duty cycle to 50%
+	MTR_A_DUTY_CYCLE = 408;		//Set duty cycle to 50%
 	MTR_B_DUTY_CYCLE = 408;
 	
-	PWM_TMR_ENABLE = 1;		//Enable the PWM Timerbase
+	PWM_TMR_ENABLE = 1;			//Enable the PWM Timerbase
 	
+	//Set up PID gains
 	setMotorACoeffs(0.7, 0.2, 0.02);
 	setMotorBCoeffs(0.7, 0.2, 0.02);
-
+	
+	//Set the control reference and measured output
+	//(This is just for testing purposes)
 	motorAPid.controlReference = Q15(0.74);
 	motorBPid.controlReference = Q15(0.74);
 	motorAPid.measuredOutput = Q15(0.453);
 	motorBPid.measuredOutput = Q15(0.453);
-	while(1){
 
+	while(1){
+		
+		//Perform PID functions (For testing)
 		PID(&motorAPid);
 		PID(&motorBPid);
-		/*
-		if(UART1DataReady() == 1){
-			c = UART1Data();
-			if(c == '0'){
-				MTR_A_DUTY_CYCLE = 0;
-			}
-			else if(c == '1'){
-				MTR_A_DUTY_CYCLE = 204;
-			}
-			else if(c == '2'){
-				MTR_A_DUTY_CYCLE = 408;
-			}
-			else if(c == '3'){
-				MTR_A_DUTY_CYCLE = 612;
-			}
-		}
-		*/
-		/*
-		if(!MOTOR_A_1I & !MOTOR_A_2I){
-			MTR_A_DUTY_CYCLE = 0;
-		}
-		else if(!MOTOR_A_1I & MOTOR_A_2I){
-			MTR_A_DUTY_CYCLE = 102;
-		}
-		else if(MOTOR_A_1I & !MOTOR_A_2I){
-			MTR_A_DUTY_CYCLE = 204;
-		}
-		else if(MOTOR_A_1I & MOTOR_A_2I){
-			MTR_A_DUTY_CYCLE = 306;
-		}
-		
-		if(!MOTOR_A_1I & !MOTOR_A_2I){
-			MTR_B_DUTY_CYCLE = 0;
-		}
-		else if(!MOTOR_A_1I & MOTOR_A_2I){
-			MTR_B_DUTY_CYCLE = 102;
-		}
-		else if(MOTOR_A_1I & !MOTOR_A_2I){
-			MTR_B_DUTY_CYCLE = 204;
-		}
-		else if(MOTOR_A_1I & MOTOR_A_2I){
-			MTR_B_DUTY_CYCLE = 306;
-		}
-		*/	
+	
 	}	
 }
 
 //Speed Caclulation ISR
 void __attribute__((__interrupt__)) _T1Interrupt(void)
 {
+	//First copy the position count to get a snapshot
 	int POSCNTcopy = (int)POSCNT;
+
+	//If the count happens to be less than zero, make it positive
+	//(I need to check this, because i'm not sure it makes sense...)
 	if (POSCNTcopy < 0)
 		POSCNTcopy = -POSCNTcopy;
+
+	//Cycle the old position into the lower array and place the copy
+	//in the new spot
 	Pos[1] = Pos[0];
 	Pos[0] = POSCNTcopy;
+
+	//Calculate velocity
+	//The decimal value 0.0085 needs to be changed based on
+	//the interrupt interval
 	velocity = (Pos[0]-Pos[1])/0.0085;
+
 	IFS0bits.T1IF = 0; 			// Clear timer 1 interrupt flag	
 }
 
 //UART RX ISR
 void __attribute__((__interrupt__)) _U1RXInterrupt(void)
 {
+	//This is test code for initial teseting of the recieve
+	//It WILL need to be changed to accomodate
 	char c;
 	c = UART1Data();
 	char veloString[20];
@@ -254,6 +236,7 @@ void UART1AddByte(char c){
 	return;
 }
 
+//Custom print line function (because the built in one sucks...)
 void UART1Println(char string[]){
 	int l = sizeof(string);
 	int i = 0;
@@ -266,6 +249,9 @@ void UART1Println(char string[]){
 	return;
 }
 
+//!!Legacy!!
+//This is likely not the answer we need, but i'll leave it
+//just in case
 void PositionCalculation(void)
 {
 	int POSCNTcopy = (int)POSCNT;
@@ -298,6 +284,7 @@ void InitUART1(void){
 	return;	
 }
 
+//Initialize the Quadrature Encoder Interface for motor A
 void InitQEI1(void){
 	//Assign QEI1 pins
 	QEI1A_I = 6;
@@ -318,6 +305,7 @@ void InitQEI1(void){
 	return;
 }
 
+//Initialize the timer for the PID calculation interrupt
 void InitTMR1(void)
 {
 	TMR1 = 0; 					// Reset timer counter
