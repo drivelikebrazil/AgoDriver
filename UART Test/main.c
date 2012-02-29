@@ -64,14 +64,15 @@ int main(void){
 	//while(!OSCCONbits.LOCK);	//wait for PLL to stabilize
 
 	//Set up UART
-	InitUART1();
+	//InitUART1();
 	
 	//Set up Quadrature Encoder Interface A
-	InitQEI1();
+	//InitQEI1();
 
 	//Set up timer 1 (Interrupts for velocity calculations)
-	InitTMR1();
-
+	//InitTMR1();
+	
+	/* Legacy for testing
 	//Set up motor A control pins as inputs
 	MOTOR_A_1TRIS = 1;
 	MOTOR_A_2TRIS = 1;
@@ -79,7 +80,12 @@ int main(void){
 	//Set up motor B control pins as inputs
 	MOTOR_B_1TRIS = 1;
 	MOTOR_B_2TRIS = 1;
+	*/
 
+	// Setup status flags as inputs
+	MTR_A_SF_TRIS = 1;
+	MTR_B_SF_TRIS = 1;
+	
 	//Initialize PWM
 	MTR_A_PWMTRIS = 0;		//sets pwm pins to outputs
 	MTR_B_PWMTRIS = 0;
@@ -97,7 +103,7 @@ int main(void){
 	PWM_CONFbits.PMOD3 = 1; 	// PWM in independent mode
 	PWM_CONFbits.PMOD2 = 1; 	// PWM in independent mode
 	PWM_CONFbits.PMOD1 = 1; 	// PWM in independent mode
-	PWM_CONFbits.PEN3H = 0; 	// PWM High pin is disabled
+	PWM_CONFbits.PEN3H = 1; 	// PWM High pin is disabled ENABLES
 	PWM_CONFbits.PEN2H = 1; 	// PWM High pin is disabled
 	PWM_CONFbits.PEN1H = 1; 	// PWM High pin is enabled
 	PWM_CONFbits.PEN3L = 0; 	// PWM Low pin disabled 

@@ -2,44 +2,44 @@
 MagicCookie={0b13fe8c-dfe0-40eb-8900-6712719559a7}
 Version=1.0
 [File000]
-Location=C:\Users\Richard Swearingen\Documents\My Dropbox\Systems Project\Code\Richard\main.o
+Location=D:\Dropbox\My Computers\Classes\Systems\AgoDriver\main.o
 Folder=Intermediary
 DeviceName=dsPIC33FJ128MC802
 LanguageToolSuiteID={479DDE59-4D56-455E-855E-FFF59A3DB57E}
 LanguageToolID={069BD372-6CA0-40D4-BF2F-5DC806D05083}
-LanguageToolLocation=C:\Program Files (x86)\Microchip\mplabc30\v3.30c\bin\pic30-gcc.exe
+LanguageToolLocation=C:\Program Files (x86)\Microchip\MPLAB C30\bin\pic30-gcc.exe
 PPAD=$(BINDIR)||$(TMPDIR)||$(AINDIR)||$(INCDIR)||$(LIBDIR)||$(LKRDIR)||
-SOLK=<src>|UART Test\main.c||<obj>||<lib>||<lkr>|C:\Program Files (x86)\Microchip\mplabc30\v3.30c\support\dsPIC33F\gld\p33FJ128MC802.gld||
+SOLK=<src>|UART Test\main.c||<obj>||<lib>||<lkr>|UART Test\p33FJ128MC802.gld||
 SuiteArgsString=
 ToolArgsString=-g -Wall -mlarge-data
 TraceCmdString=
-DebugOptions=-D__DEBUG
+DebugOptions=
 [File001]
-Location=C:\Users\Richard Swearingen\Documents\My Dropbox\Systems Project\Code\Richard\dsPIC UART Test.cof
+Location=D:\Dropbox\My Computers\Classes\Systems\AgoDriver\dsPIC UART Test.cof
 Folder=Output
 DeviceName=dsPIC33FJ128MC802
 LanguageToolSuiteID={479DDE59-4D56-455E-855E-FFF59A3DB57E}
 LanguageToolID={433C3D55-811D-409D-A6BF-159CF9355B42}
-LanguageToolLocation=C:\Program Files (x86)\Microchip\mplabc30\v3.30c\bin\pic30-ld.exe
+LanguageToolLocation=C:\Program Files (x86)\Microchip\MPLAB C30\bin\pic30-ld.exe
 PPAD=$(BINDIR)||$(TMPDIR)||$(AINDIR)||$(INCDIR)||$(LIBDIR)||$(LKRDIR)||
-SOLK=<src>|UART Test\main.c||<obj>||<lib>||<lkr>|C:\Program Files (x86)\Microchip\mplabc30\v3.30c\support\dsPIC33F\gld\p33FJ128MC802.gld||
+SOLK=<src>|UART Test\main.c||<obj>||<lib>||<lkr>|UART Test\p33FJ128MC802.gld||
 SuiteArgsString=
 ToolArgsString=-o"$(BINDIR_)$(TARGETBASE).$(TARGETSUFFIX)" -Map="$(BINDIR_)$(TARGETBASE).map" --report-mem
 TraceCmdString=
-DebugOptions=--defsym=__MPLAB_DEBUG=1
+DebugOptions=
 [File002]
-Location=C:\Users\Richard Swearingen\Documents\My Dropbox\Systems Project\Code\Richard\dsPIC UART Test.hex
+Location=D:\Dropbox\My Computers\Classes\Systems\AgoDriver\dsPIC UART Test.hex
 Folder=Output
 DeviceName=dsPIC33FJ128MC802
 LanguageToolSuiteID={479DDE59-4D56-455E-855E-FFF59A3DB57E}
 LanguageToolID={433C3D55-811D-409D-A6BF-159CF9355B42}
-LanguageToolLocation=C:\Program Files (x86)\Microchip\mplabc30\v3.30c\bin\pic30-ld.exe
+LanguageToolLocation=C:\Program Files (x86)\Microchip\MPLAB C30\bin\pic30-ld.exe
 PPAD=$(BINDIR)||$(TMPDIR)||$(AINDIR)||$(INCDIR)||$(LIBDIR)||$(LKRDIR)||
-SOLK=<src>|UART Test\main.c||<obj>||<lib>||<lkr>|C:\Program Files (x86)\Microchip\mplabc30\v3.30c\support\dsPIC33F\gld\p33FJ128MC802.gld||
+SOLK=<src>|UART Test\main.c||<obj>||<lib>||<lkr>|UART Test\p33FJ128MC802.gld||
 SuiteArgsString=
 ToolArgsString=-o"$(BINDIR_)$(TARGETBASE).$(TARGETSUFFIX)" -Map="$(BINDIR_)$(TARGETBASE).map" --report-mem
 TraceCmdString=
-DebugOptions=--defsym=__MPLAB_DEBUG=1
+DebugOptions=
 [TOOL_LOC_STAMPS]
-tool_loc{069BD372-6CA0-40D4-BF2F-5DC806D05083}=C:\Program Files (x86)\Microchip\mplabc30\v3.30c\bin\pic30-gcc.exe
-tool_loc{433C3D55-811D-409D-A6BF-159CF9355B42}=C:\Program Files (x86)\Microchip\mplabc30\v3.30c\bin\pic30-ld.exe
+tool_loc{069BD372-6CA0-40D4-BF2F-5DC806D05083}=C:\Program Files (x86)\Microchip\MPLAB C30\bin\pic30-gcc.exe
+tool_loc{433C3D55-811D-409D-A6BF-159CF9355B42}=C:\Program Files (x86)\Microchip\MPLAB C30\bin\pic30-ld.exe

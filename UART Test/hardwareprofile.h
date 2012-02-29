@@ -1,5 +1,5 @@
 #include <p33FJ128MC802.h>
-
+/* Used for testing the dsPIC on the breadboard
 //Shortcut names for the motor input pins
 #define	MOTOR_A_1TRIS	(TRISAbits.TRISA0)
 #define	MOTOR_A_2TRIS	(TRISAbits.TRISA1)
@@ -10,6 +10,7 @@
 #define	MOTOR_B_2TRIS	(TRISAbits.TRISA3)
 #define	MOTOR_B_1I	(PORTAbits.RA2)
 #define	MOTOR_B_2I	(PORTAbits.RA3)
+*/
 
 //Shortcut names for PWM
 #define	MTR_A_PWMTRIS	(TRISBbits.TRISB12)
@@ -23,9 +24,15 @@
 #define	PWM_CONFbits	(PWMCON1bits)
 #define	PWM_TMR_ENABLE	(PTCONbits.PTEN)
 
-#define	MTR_B_PWMTRIS	(TRISBbits.TRISB14)
-#define	MTR_B_PWM_O	(PORTBbits.RB14)
-#define	MTR_B_DUTY_CYCLE	(PDC2)
+#define	MTR_B_PWMTRIS	(TRISBbits.TRISB10)
+#define	MTR_B_PWM_O	(PORTBbits.RB10)
+#define	MTR_B_DUTY_CYCLE	(PDC3)
+
+//Status flag shortcut names
+#define MTR_A_SF_TRIS	TRISBbits.TRISB2
+#define MTR_B_SF_TRIS	TRISBbits.TRISB3
+#define MTR_A_SF_I	PORTBbits.RB2
+#define MTR_B_SF_I	PORTBbits.RB3
 
 //PPS Input registers
 #define U1RXR_I RPINR18bits.U1RXR

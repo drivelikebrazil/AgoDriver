@@ -38,7 +38,7 @@ file_002=no
 [FILE_INFO]
 file_000=UART Test\main.c
 file_001=UART Test\hardwareprofile.h
-file_002=H:\drivelikebrazil\git\AgoDriver\UART Test\p33FJ128MC802.gld
+file_002=UART Test\p33FJ128MC802.gld
 [SUITE_INFO]
 suite_guid={479DDE59-4D56-455E-855E-FFF59A3DB57E}
 suite_state=
