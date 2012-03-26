@@ -11,16 +11,20 @@ _FWDT(FWDTEN_OFF)					//Turn watchdog timer off
 _FICD(ICS_PGD1 & JTAGEN_OFF)		//Set to programming interface 1 and no JTAG
 
 //Function definitions
-unsigned char UART1DataReady(void);
-unsigned char UART1Data(void);
-void UART1AddByte(char c);
-void InitUART1(void);
-void InitQEI1(void);
-void InitTMR1(void);
-void UART1Println(char string[]);
-void PositionCalculation(void);
-void setMotorACoeffs(float kP, float kI, float kD);
-void setMotorBCoeffs(float kP, float kI, float kD);
+unsigned char UART1DataReady(void);	//Check for available data in RX buffer
+unsigned char UART1Data(void);				//Get byte from RX buffer
+void UART1AddByte(char c);					//Add byte to TX buffer, pause if it's full
+void InitUART1(void);								//Initialize UART
+void InitQEI1(void);									//Initialize the Quadrature Encoder Interface for motor A
+void InitTMR1(void);								//Initialize the timer for the PID calculation interrupt
+void UART1Println(char string[]);				//Custom print line function (because the built in one sucks...)
+void PositionCalculation(void);					// !!Legacy!!
+															// This is likely not the answer we need, but i'll leave it
+															//just in case
+void setMotorACoeffs(float kP, float kI, float kD);	//Set PID Gains for motor A
+void setMotorBCoeffs(float kP, float kI, float kD);	//Set PID Gains for motor B
+int calcNextTrap(int timeSlice, float maxSpeed, float accel, float decel, int distance, int* distanceTraveled, int* currentSpeed);	// get the next value in the trapezoidal function
+
 
 //Begin motor control variables
 const int NEXT_SPEED_BUFFER_SIZE = 25;	//Defines the length of the nextSpeed buffer
@@ -34,8 +38,7 @@ int quadCountsB;			//Number of counts per revolution for motor B quadrature enco
 volatile int velocity;				//velocity measurement
 int Pos[2] = {0,0};					//last and present position
 tPID motorAPid;						//PID data structure for Motor A
-tPID motorBPid;
-						//PID data structure for Motor B
+tPID motorBPid;						//PID data structure for Motor B
 float nextSpeedA[NEXT_SPEED_BUFFER_SIZE];		//MTRA Ring buffer for storing speeds that the PID algorithm consumes as the control reference
 volatile int nextSpeedAWriteCounter = 0;		//Indicates the next index to be written to in the nextSpeedA buffer
 volatile int nextSpeedAReadCounter = 0;			//Indicates the next index to be read from in the nextSpeedA buffer
@@ -60,11 +63,12 @@ fractional mBcontHist[3] __attribute__ 	((space(ymemory)));		//((section (".ybss
 fractional kCoeffsA[] = {0.7,0.2,0};
 fractional kCoeffsB[] = {0.7,0.2,0};
 
-int main(void){
+int main(void)
+{
 	AD1PCFGL = 0xFFFF;  //make all pins digital
 
 	//Initialize PID
-	motorAPid.ab	cCoefficients = &mAabcCoeffs[0];
+	motorAPid.abcCoefficients = &mAabcCoeffs[0];
 	motorBPid.abcCoefficients = &mBabcCoeffs[0];
 
 	motorAPid.controlHistory = &mAcontHist[0];
@@ -244,18 +248,21 @@ void setMotorBCoeffs(float kP, float kI, float kD){
 }
 
 //Check for available data in RX buffer
-unsigned char UART1DataReady(void){
+unsigned char UART1DataReady(void)
+{
 	return U1STAbits.URXDA;
 }
 
 //Get byte from RX buffer
-unsigned char UART1Data(void){
+unsigned char UART1Data(void)
+{
 	while(U1STAbits.URXDA == 0);
 	return U1RXREG;
 }
 
 //Add byte to TX buffer, pause if it's full
-void UART1AddByte(char c){
+void UART1AddByte(char c)
+{
 	//int i;
 
 	//Wait for space in buffer
@@ -274,7 +281,8 @@ void UART1AddByte(char c){
 }
 
 //Custom print line function (because the built in one sucks...)
-void UART1Println(char string[]){
+void UART1Println(char string[])
+{
 	int l = sizeof(string);
 	int i = 0;
 	while((i < (l + 1)) && (string[i] != '\0'))
@@ -301,7 +309,8 @@ void PositionCalculation(void)
 }
 
 //Initialize UART
-void InitUART1(void){
+void InitUART1(void)
+{
 	//Assign UART pins
 	//RX assigned to RP9, TX assigned to RP8
 	U1RXR_I = 9;
@@ -322,7 +331,8 @@ void InitUART1(void){
 }
 
 //Initialize the Quadrature Encoder Interface for motor A
-void InitQEI1(void){
+void InitQEI1(void)
+{
 	//Assign QEI1 pins
 	QEI1A_I = QEIA_A;
 	QEI1B_I = QEIA_B;
@@ -375,3 +385,61 @@ void InitTMR1(void)
 	T1CONbits.TON = 1; 			// Turn on timer 1
 	return;
 }
+
+//
+// Trapezoidal Movement Functions
+//
+// Calculate velocity given distance
+int calcNextTrap(int timeSlice, float maxSpeed, float accel, float decel, int distance, int* distanceTraveled, int* currentSpeed)
+{
+	// timeSlice is the time interval at which we are measuing points on the trapezoid
+	int nextSpeed	// The next speed that the PID algorithm should aim for
+	
+	// Check to see if we are hitting the maxSpeed
+	if(currentSpeed >= maxSpeed)
+	{
+		nextSpeed = maxSpeed;
+	}
+	else	// If not, assume we are accelerating and calculate nextSpeed
+	{
+		nextSpeed = currentSpeed + (accel * timeSlice);
+	}
+	
+	// If we are going to overshoot our target b
+	if ((distanceTraveled + (nextSpeed * timeSlice)) > distance)
+	{
+		nextSpeed = currentSpeed - (decel * timeSlice);
+	}
+	
+	distanceTraveled = distanceTraveled + nextSpeed * timeSlice;
+	curSpeed = nextSpeed;
+	
+	return nextSpeed;
+}
+
+/* Greg's obsolete code
+float velocity(float maxSpeed, float accel, float decel, int time)
+{
+	float accelVelocity = accel * time;
+	float decelVelocity = decel * time;
+	
+	if (accelVelocity < maxSpeed)
+		return accelVelocity;
+	else if (decelVelocity < maxSpeed
+		return decelVelocity;
+	else
+		return maxSpeed;
+}
+
+	//float accelTime = maxSpeed / accel;
+	//float decelTime = maxSpeed / decel;
+	
+	float accelDistance = .5 * accel * time * time; // How far I have gone so far
+	float projectedDistance = accelDistance + ((accel * distance) * (accel * distance) / 2 * decel);	// How far I would go if I slow down now
+
+	// slow down if we can't reach our amx speed
+	if (projectedDistance > distance) 
+	{
+		
+	}
+*/
