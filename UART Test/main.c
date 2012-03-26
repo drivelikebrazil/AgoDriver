@@ -23,10 +23,34 @@ void setMotorACoeffs(float kP, float kI, float kD);
 void setMotorBCoeffs(float kP, float kI, float kD);
 
 //Begin motor control variables
+const int NEXT_SPEED_BUFFER_SIZE = 25;	//Defines the length of the nextSpeed buffer
+
+float wheelDiameterA;			//Wheel diameter for wheel attached to motor A
+float wheelDiameterB;			//Wheel diameter for wheel attached to motor B
+float wheelSpacing;			//Spacing between wheels
+int quadCountsA;			//Number of counts per revolution for motor A quadrature encoder
+int quadCountsB;			//Number of counts per revolution for motor B quadrature encoder
+
 volatile int velocity;				//velocity measurement
 int Pos[2] = {0,0};					//last and present position
 tPID motorAPid;						//PID data structure for Motor A
-tPID motorBPid;						//PID data structure for Motor B
+tPID motorBPid;
+						//PID data structure for Motor B
+float nextSpeedA[NEXT_SPEED_BUFFER_SIZE];		//MTRA Ring buffer for storing speeds that the PID algorithm consumes as the control reference
+volatile int nextSpeedAWriteCounter = 0;		//Indicates the next index to be written to in the nextSpeedA buffer
+volatile int nextSpeedAReadCounter = 0;			//Indicates the next index to be read from in the nextSpeedA buffer
+
+float nextSpeedB[NEXT_SPEED_BUFFER_SIZE];		//MTRA Ring buffer for storing speeds that the PID algorithm consumes as the control reference
+volatile int nextSpeedBWriteCounter = 0;		//Indicates the next index to be written to in the nextSpeedB buffer
+volatile int nextSpeedBReadCounter = 0;			//Indicates the next index to be read from in the nextSpeedB buffer
+
+int stayConstantVelocityA = 0;				//Indicates that motor A should remain at a constant velocity
+int constantVelocityA = 0;				//The constant velocity that A should remain at
+int stayConstantVelocityB = 0;				//Indicates that motor B shoudl remain at a constant velocity
+int constantVelocityB = 0;				//The constant velocity that B should remain at
+
+int currentSpeed = 0;					//Last speed calculated, used for iterative calculations of velocity
+int distanceTraveled = 0;				//Distance traveled for the current function
 
 //PID variable definitions
 fractional mAabcCoeffs[3] __attribute__ ((space(xmemory)));		//((section (".xbss, bss, xmemory")));
@@ -40,7 +64,7 @@ int main(void){
 	AD1PCFGL = 0xFFFF;  //make all pins digital
 
 	//Initialize PID
-	motorAPid.abcCoefficients = &mAabcCoeffs[0];
+	motorAPid.ab	cCoefficients = &mAabcCoeffs[0];
 	motorBPid.abcCoefficients = &mBabcCoeffs[0];
 
 	motorAPid.controlHistory = &mAcontHist[0];
@@ -86,11 +110,18 @@ int main(void){
 	MTR_A_SF_TRIS = 1;
 	MTR_B_SF_TRIS = 1;
 	
-	//Initialize PWM
-	MTR_A_PWMTRIS = 0;		//sets pwm pins to outputs
-	MTR_B_PWMTRIS = 0;
-	MTR_A_PWM_O = 0;		//clears any data from pwm pins
-	MTR_B_PWM_O = 0;
+	//*****Initialize PWM******
+	//Set pwm pins to outputs
+	MTR_AH_PWMTRIS = 0;		
+	MTR_AL_PWMTRIS = 0;
+	MTR_BH_PWMTRIS = 0;
+	MTR_BL_PWMTRIS = 0;
+	
+	//Clear any data from pwm pins
+	MTR_AH_PWM_O = 0;		
+	MTR_AL_PWM_O = 0;
+	MTR_BH_PWM_O = 0;
+	MTR_BL_PWM_O = 0;
 	
 	PWM_POSTSCALE = 0;		//No pwm timer scaling
 	PWM_PRESCALE = 0;
@@ -103,8 +134,8 @@ int main(void){
 	PWM_CONFbits.PMOD3 = 1; 	// PWM in independent mode
 	PWM_CONFbits.PMOD2 = 1; 	// PWM in independent mode
 	PWM_CONFbits.PMOD1 = 1; 	// PWM in independent mode
-	PWM_CONFbits.PEN3H = 1; 	// PWM High pin is disabled ENABLES
-	PWM_CONFbits.PEN2H = 1; 	// PWM High pin is disabled
+	PWM_CONFbits.PEN3H = 0; 	// PWM High pin is disabled
+	PWM_CONFbits.PEN2H = 1; 	// PWM High pin is enabled
 	PWM_CONFbits.PEN1H = 1; 	// PWM High pin is enabled
 	PWM_CONFbits.PEN3L = 0; 	// PWM Low pin disabled 
 	PWM_CONFbits.PEN2L = 0; 	// PWM Low pin disabled 
@@ -162,7 +193,7 @@ void __attribute__((__interrupt__)) _T1Interrupt(void)
 //UART RX ISR
 void __attribute__((__interrupt__)) _U1RXInterrupt(void)
 {
-	//This is test code for initial teseting of the recieve
+	//This is test code for initial testing of the recieve
 	//It WILL need to be changed to accomodate
 	char c;
 	c = UART1Data();
@@ -293,8 +324,8 @@ void InitUART1(void){
 //Initialize the Quadrature Encoder Interface for motor A
 void InitQEI1(void){
 	//Assign QEI1 pins
-	QEI1A_I = 6;
-	QEI1B_I = 5;
+	QEI1A_I = QEIA_A;
+	QEI1B_I = QEIA_B;
 	
 	//Set up QEI1
 	QEI1CONbits.QEIM = 0; 		// Disable QEI Module
@@ -308,6 +339,24 @@ void InitQEI1(void){
 	POS1CNT = 0; 				// Reset position counter
 	MAX1CNT = 800;				//Set maximum number of counts to the 4x the total encoder counts
 	QEI1CONbits.QEIM = 7; 		// X4 mode with position counter reset by MAX1CNT
+
+	//Assign QEI2 pins
+	QEI2A_I = QEIB_A;
+	QEI2B_I = QEIB_B;
+	
+	//Set up QEI1
+	QEI2CONbits.QEIM = 0; 		// Disable QEI Module
+	QEI2CONbits.CNTERR = 0; 	// Clear any count errors
+	QEI2CONbits.QEISIDL = 0; 	// Continue operation during sleep
+	QEI2CONbits.SWPAB = 0; 		// QEA and QEB not swapped
+	QEI2CONbits.PCDOUT = 0; 	// Normal I/O pin operation
+	DFLT2CONbits.CEID = 1; 		// Count error interrupts disabled
+	DFLT2CONbits.QEOUT = 1; 	// Digital filters output enabled for QEn pins
+	DFLT2CONbits.QECK = 4; 		// 1:32 clock divide for digital filter for QEn
+	POS2CNT = 0; 				// Reset position counter
+	MAX2CNT = 800;				//Set maximum number of counts to the 4x the total encoder counts
+	QEI2CONbits.QEIM = 7; 		// X4 mode with position counter reset by MAX1CNT
+	
 	return;
 }
 

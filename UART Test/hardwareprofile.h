@@ -13,20 +13,25 @@
 */
 
 //Shortcut names for PWM
-#define	MTR_A_PWMTRIS	(TRISBbits.TRISB12)
-#define	MTR_A_PWM_O	(PORTBbits.RB12)
+#define	MTR_AH_PWMTRIS	(TRISBbits.TRISB12)
+#define	MTR_AH_PWM_O	(PORTBbits.RB12)
+#define MTR_AL_PWMTRIS	(TRISBbits.TRISB13)
+#define MTR_AL_PWM_O	(PORTBbits.RB13)
+#define	MTR_A_DUTY_CYCLE	(PDC1)
+
+#define	MTR_BH_PWMTRIS	(TRISBbits.TRISB14)
+#define	MTR_BH_PWM_O	(PORTBbits.RB14)
+#define MTR_BL_PWMTRIS	(TRISBbits.TRISB15)
+#define MTR_BL_PWM_O	(PORTBbits.RB15)
+#define	MTR_B_DUTY_CYCLE	(PDC2)
+
 #define	PWM_POSTSCALE	(PTCONbits.PTOPS)
 #define	PWM_PRESCALE	(PTCONbits.PTCKPS)
 #define	PWM_TIMEBASEMODE	(PTCONbits.PTMOD)
 #define	PWM_TMRSTART	(PTMR)
 #define	PWM_TIMEBASE_PER	(PTPER)
-#define	MTR_A_DUTY_CYCLE	(PDC1)
 #define	PWM_CONFbits	(PWMCON1bits)
 #define	PWM_TMR_ENABLE	(PTCONbits.PTEN)
-
-#define	MTR_B_PWMTRIS	(TRISBbits.TRISB10)
-#define	MTR_B_PWM_O	(PORTBbits.RB10)
-#define	MTR_B_DUTY_CYCLE	(PDC3)
 
 //Status flag shortcut names
 #define MTR_A_SF_TRIS	TRISBbits.TRISB2
@@ -34,11 +39,19 @@
 #define MTR_A_SF_I	PORTBbits.RB2
 #define MTR_B_SF_I	PORTBbits.RB3
 
+//PPS Inputs
+#define QEIA_A	6
+#define QEIA_B	5
+#define QEIB_A	9
+#define QEIB_B	8
+
 //PPS Input registers
 #define U1RXR_I RPINR18bits.U1RXR
 #define U1CTSR_I RPINR18bits.U1CTSR
 #define QEI1A_I	RPINR14bits.QEA1R
 #define QEI1B_I	RPINR14bits.QEB1R
+#define QEI2A_I	RPINR16bits.QEA2R
+#define QEI2B_I RPINR16bits.QEB2R
 
 //PPS Outputs
 #define U1TX_O	3
