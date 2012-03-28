@@ -4,41 +4,50 @@
 #include <stdlib.h>
 #include <dsp.h>
 
+#region processor registers
 //Set up processor registers
-_FOSCSEL(FNOSC_FRC)					//Use built in oscillator
-_FOSC(POSCMD_NONE & OSCIOFNC_ON)	//Use Oscillator pins as I/O pins is on
-_FWDT(FWDTEN_OFF)					//Turn watchdog timer off
-_FICD(ICS_PGD1 & JTAGEN_OFF)		//Set to programming interface 1 and no JTAG
+_FOSCSEL(FNOSC_FRC)									//Use built in oscillator
+_FOSC(POSCMD_NONE & OSCIOFNC_ON)					//Use Oscillator pins as I/O pins is on
+_FWDT(FWDTEN_OFF)									//Turn watchdog timer off
+_FICD(ICS_PGD1 & JTAGEN_OFF)						//Set to programming interface 1 and no JTAG
+#endregion
 
-//Function definitions
-unsigned char UART1DataReady(void);	//Check for available data in RX buffer
-unsigned char UART1Data(void);				//Get byte from RX buffer
-void UART1AddByte(char c);					//Add byte to TX buffer, pause if it's full
+#region Function definitions
+
+//UART Functions
+unsigned char UART1DataReady(void);					//Check for available data in RX buffer
+unsigned char UART1Data(void);						//Get byte from RX buffer
+void UART1AddByte(char c);							//Add byte to TX buffer, pause if it's full
 void InitUART1(void);								//Initialize UART
-void InitQEI1(void);									//Initialize the Quadrature Encoder Interface for motor A
+void UART1Println(char string[]);					//Custom print line function (because the built in one sucks...)
+
+//Motor Control Functions
+void InitQEI1(void);								//Initialize the Quadrature Encoder Interface for motor A
 void InitTMR1(void);								//Initialize the timer for the PID calculation interrupt
-void UART1Println(char string[]);				//Custom print line function (because the built in one sucks...)
-void PositionCalculation(void);					// !!Legacy!!
-															// This is likely not the answer we need, but i'll leave it
-															//just in case
+void InitPid();										//Initialize PID
 void setMotorACoeffs(float kP, float kI, float kD);	//Set PID Gains for motor A
 void setMotorBCoeffs(float kP, float kI, float kD);	//Set PID Gains for motor B
 int calcNextTrap(int timeSlice, float maxSpeed, float accel, float decel, int distance, int* distanceTraveled, int* currentSpeed);	// get the next value in the trapezoidal function
 
+//Legacy Functions
+void PositionCalculation(void);						// !!Legacy!!
+#endregion
 
-//Begin motor control variables
-const int NEXT_SPEED_BUFFER_SIZE = 25;	//Defines the length of the nextSpeed buffer
+#region Global Variables
+//Motor control constants
+const int NEXT_SPEED_BUFFER_SIZE = 25;			//Defines the length of the nextSpeed buffer
 
-float wheelDiameterA;			//Wheel diameter for wheel attached to motor A
-float wheelDiameterB;			//Wheel diameter for wheel attached to motor B
-float wheelSpacing;			//Spacing between wheels
-int quadCountsA;			//Number of counts per revolution for motor A quadrature encoder
-int quadCountsB;			//Number of counts per revolution for motor B quadrature encoder
+//Setup variables
+float wheelDiameterA;							//Wheel diameter for wheel attached to motor A
+float wheelDiameterB;							//Wheel diameter for wheel attached to motor B
+float wheelSpacing;								//Spacing between wheels
+int quadCountsA;								//Number of counts per revolution for motor A quadrature encoder
+int quadCountsB;								//Number of counts per revolution for motor B quadrature encoder
 
-volatile int velocity;				//velocity measurement
-int Pos[2] = {0,0};					//last and present position
-tPID motorAPid;						//PID data structure for Motor A
-tPID motorBPid;						//PID data structure for Motor B
+//PID Variables
+tPID motorAPid;									//PID data structure for Motor A
+tPID motorBPid;									//PID data structure for Motor B
+
 float nextSpeedA[NEXT_SPEED_BUFFER_SIZE];		//MTRA Ring buffer for storing speeds that the PID algorithm consumes as the control reference
 volatile int nextSpeedAWriteCounter = 0;		//Indicates the next index to be written to in the nextSpeedA buffer
 volatile int nextSpeedAReadCounter = 0;			//Indicates the next index to be read from in the nextSpeedA buffer
@@ -47,13 +56,17 @@ float nextSpeedB[NEXT_SPEED_BUFFER_SIZE];		//MTRA Ring buffer for storing speeds
 volatile int nextSpeedBWriteCounter = 0;		//Indicates the next index to be written to in the nextSpeedB buffer
 volatile int nextSpeedBReadCounter = 0;			//Indicates the next index to be read from in the nextSpeedB buffer
 
-int stayConstantVelocityA = 0;				//Indicates that motor A should remain at a constant velocity
-int constantVelocityA = 0;				//The constant velocity that A should remain at
-int stayConstantVelocityB = 0;				//Indicates that motor B shoudl remain at a constant velocity
-int constantVelocityB = 0;				//The constant velocity that B should remain at
+volatile int velocity;							//velocity measurement
+int Pos[2] = {0,0};								//last and present position
 
-int currentSpeed = 0;					//Last speed calculated, used for iterative calculations of velocity
-int distanceTraveled = 0;				//Distance traveled for the current function
+int stayConstantVelocityA = 0;					//Indicates that motor A should remain at a constant velocity
+int constantVelocityA = 0;						//The constant velocity that A should remain at
+
+int stayConstantVelocityB = 0;					//Indicates that motor B shoudl remain at a constant velocity
+int constantVelocityB = 0;						//The constant velocity that B should remain at
+
+float currentSpeed = 0;							//Last speed calculated, used for iterative calculations of velocity
+float distanceTraveled = 0;						//Distance traveled for the current function
 
 //PID variable definitions
 fractional mAabcCoeffs[3] __attribute__ ((space(xmemory)));		//((section (".xbss, bss, xmemory")));
@@ -62,34 +75,19 @@ fractional mAcontHist[3] __attribute__ 	((space(ymemory)));		//((section (".ybss
 fractional mBcontHist[3] __attribute__ 	((space(ymemory)));		//((section (".ybss, bss, ymemory")));
 fractional kCoeffsA[] = {0.7,0.2,0};
 fractional kCoeffsB[] = {0.7,0.2,0};
+#endregion
 
 int main(void)
 {
 	AD1PCFGL = 0xFFFF;  //make all pins digital
 
-	//Initialize PID
-	motorAPid.abcCoefficients = &mAabcCoeffs[0];
-	motorBPid.abcCoefficients = &mBabcCoeffs[0];
-
-	motorAPid.controlHistory = &mAcontHist[0];
-	motorBPid.controlHistory = &mBcontHist[0];
-
-	PIDInit(&motorAPid);
-	PIDInit(&motorBPid);
-
-	PIDCoeffCalc(&kCoeffsA[0], &motorAPid);
-	PIDCoeffCalc(&kCoeffsB[0], &motorBPid);
-	
-	/*
-		We may use this commented out section later to increase the speed, leave it here!!
-	*/
 	//setup internal clock for 80MHz/40MIPS
 	//7.37/2=3.685*43=158.455/2=79.2275
-	//CLKDIVbits.PLLPRE=0; 	// PLLPRE (N2) 0=/2 
-	//PLLFBD=41; 		//pll multiplier (M) = +2
-	//CLKDIVbits.PLLPOST=0;	// PLLPOST (N1) 0=/2
+	CLKDIVbits.PLLPRE=0; 		// PLLPRE (N2) 0=/2 
+	PLLFBD=41; 			//pll multiplier (M) = +2
+	CLKDIVbits.PLLPOST=0;		// PLLPOST (N1) 0=/2
 	 	
-	//while(!OSCCONbits.LOCK);	//wait for PLL to stabilize
+	while(!OSCCONbits.LOCK);	//wait for PLL to stabilize
 
 	//Set up UART
 	//InitUART1();
@@ -99,16 +97,6 @@ int main(void)
 
 	//Set up timer 1 (Interrupts for velocity calculations)
 	//InitTMR1();
-	
-	/* Legacy for testing
-	//Set up motor A control pins as inputs
-	MOTOR_A_1TRIS = 1;
-	MOTOR_A_2TRIS = 1;
-
-	//Set up motor B control pins as inputs
-	MOTOR_B_1TRIS = 1;
-	MOTOR_B_2TRIS = 1;
-	*/
 
 	// Setup status flags as inputs
 	MTR_A_SF_TRIS = 1;
@@ -127,13 +115,13 @@ int main(void)
 	MTR_BH_PWM_O = 0;
 	MTR_BL_PWM_O = 0;
 	
-	PWM_POSTSCALE = 0;		//No pwm timer scaling
+	PWM_POSTSCALE = 0;			//No pwm timer scaling
 	PWM_PRESCALE = 0;
-	PWM_TIMEBASEMODE = 0;	//set to free running
+	PWM_TIMEBASEMODE = 0;		//set to free running
 	
-	PWM_TMRSTART = 0;		//start counter at 0
+	PWM_TMRSTART = 0;			//start counter at 0
 	
-	PWM_TIMEBASE_PER = 408;	//set the timebase period for the pwm module
+	PWM_TIMEBASE_PER = 408;		//set the timebase period for the pwm module
 	
 	PWM_CONFbits.PMOD3 = 1; 	// PWM in independent mode
 	PWM_CONFbits.PMOD2 = 1; 	// PWM in independent mode
@@ -168,6 +156,22 @@ int main(void)
 		PID(&motorBPid);
 	
 	}	
+}
+
+//Initialize PID
+void InitPid()
+{
+	motorAPid.abcCoefficients = &mAabcCoeffs[0];
+	motorBPid.abcCoefficients = &mBabcCoeffs[0];
+
+	motorAPid.controlHistory = &mAcontHist[0];
+	motorBPid.controlHistory = &mBcontHist[0];
+
+	PIDInit(&motorAPid);
+	PIDInit(&motorBPid);
+
+	PIDCoeffCalc(&kCoeffsA[0], &motorAPid);
+	PIDCoeffCalc(&kCoeffsB[0], &motorBPid);
 }
 
 //Speed Caclulation ISR
@@ -294,20 +298,6 @@ void UART1Println(char string[])
 	return;
 }
 
-//!!Legacy!!
-//This is likely not the answer we need, but i'll leave it
-//just in case
-void PositionCalculation(void)
-{
-	int POSCNTcopy = (int)POSCNT;
-	if (POSCNTcopy < 0)
-		POSCNTcopy = -POSCNTcopy;
-	Pos[1] = Pos[0];
-	Pos[0] = POSCNTcopy;
-	
-	return;
-}
-
 //Initialize UART
 void InitUART1(void)
 {
@@ -354,7 +344,7 @@ void InitQEI1(void)
 	QEI2A_I = QEIB_A;
 	QEI2B_I = QEIB_B;
 	
-	//Set up QEI1
+	//Set up QEI2
 	QEI2CONbits.QEIM = 0; 		// Disable QEI Module
 	QEI2CONbits.CNTERR = 0; 	// Clear any count errors
 	QEI2CONbits.QEISIDL = 0; 	// Continue operation during sleep
@@ -443,3 +433,17 @@ float velocity(float maxSpeed, float accel, float decel, int time)
 		
 	}
 */
+
+// !!Legacy!!
+//This is likely not the answer we need, but i'll leave it
+//just in case
+void PositionCalculation(void)
+{
+	int POSCNTcopy = (int)POSCNT;
+	if (POSCNTcopy < 0)
+		POSCNTcopy = -POSCNTcopy;
+	Pos[1] = Pos[0];
+	Pos[0] = POSCNTcopy;
+	
+	return;
+}
