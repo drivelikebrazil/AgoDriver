@@ -103,13 +103,13 @@ int main(void)
 	MTR_B_SF_TRIS = 1;
 	
 	//*****Initialize PWM******
-	//Set pwm pins to outputs
-	MTR_AH_PWMTRIS = 0;		
-	MTR_AL_PWMTRIS = 0;
-	MTR_BH_PWMTRIS = 0;
-	MTR_BL_PWMTRIS = 0;
+	//Set pwm pins to inputs
+	MTR_AH_PWMTRIS = 1;		
+	MTR_AL_PWMTRIS = 1;
+	MTR_BH_PWMTRIS = 1;
+	MTR_BL_PWMTRIS = 1;
 	
-	//Clear any data from pwm pins
+	/*Clear any data from pwm pins
 	MTR_AH_PWM_O = 0;		
 	MTR_AL_PWM_O = 0;
 	MTR_BH_PWM_O = 0;
@@ -148,14 +148,14 @@ int main(void)
 	motorBPid.controlReference = Q15(0.74);
 	motorAPid.measuredOutput = Q15(0.453);
 	motorBPid.measuredOutput = Q15(0.453);
-
+	*/
 	while(1){
 		
 		//Perform PID functions (For testing)
-		PID(&motorAPid);
-		PID(&motorBPid);
+		//PID(&motorAPid);
+		//PID(&motorBPid);
 	
-	}	
+	}
 }
 
 //Initialize PID
