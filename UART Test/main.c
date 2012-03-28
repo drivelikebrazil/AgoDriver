@@ -1,4 +1,3 @@
-//Test code, first run
 #include "hardwareprofile.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -23,12 +22,13 @@ void PositionCalculation(void);					// !!Legacy!!
 															//just in case
 void setMotorACoeffs(float kP, float kI, float kD);	//Set PID Gains for motor A
 void setMotorBCoeffs(float kP, float kI, float kD);	//Set PID Gains for motor B
-int calcNextTrap(int timeSlice, float maxSpeed, float accel, float decel, int distance, int* distanceTraveled, int* currentSpeed);	// get the next value in the trapezoidal function
+int calcNextTrap(float timeSlice, float maxSpeed, float accel, float decel, float distance);	// get the next value in the trapezoidal function
 
 
 //Begin motor control variables
+// Note: "Bool" -> 0 = False, 1 = True
 const int NEXT_SPEED_BUFFER_SIZE = 25;	//Defines the length of the nextSpeed buffer
-
+int PIDCalc = 1;			//Perform PID algorithm calculations in the interupt? (BOOL)
 float wheelDiameterA;			//Wheel diameter for wheel attached to motor A
 float wheelDiameterB;			//Wheel diameter for wheel attached to motor B
 float wheelSpacing;			//Spacing between wheels
@@ -41,19 +41,19 @@ tPID motorAPid;						//PID data structure for Motor A
 tPID motorBPid;						//PID data structure for Motor B
 float nextSpeedA[NEXT_SPEED_BUFFER_SIZE];		//MTRA Ring buffer for storing speeds that the PID algorithm consumes as the control reference
 volatile int nextSpeedAWriteCounter = 0;		//Indicates the next index to be written to in the nextSpeedA buffer
-volatile int nextSpeedAReadCounter = 0;			//Indicates the next index to be read from in the nextSpeedA buffer
+volatile int nextSpeedAReadCounter = -1;			//Indicates the next index to be read from in the nextSpeedA buffer
 
 float nextSpeedB[NEXT_SPEED_BUFFER_SIZE];		//MTRA Ring buffer for storing speeds that the PID algorithm consumes as the control reference
 volatile int nextSpeedBWriteCounter = 0;		//Indicates the next index to be written to in the nextSpeedB buffer
-volatile int nextSpeedBReadCounter = 0;			//Indicates the next index to be read from in the nextSpeedB buffer
+volatile int nextSpeedBReadCounter = -1;		//Indicates the next index to be read from in the nextSpeedB buffer
 
-int stayConstantVelocityA = 0;				//Indicates that motor A should remain at a constant velocity
-int constantVelocityA = 0;				//The constant velocity that A should remain at
-int stayConstantVelocityB = 0;				//Indicates that motor B shoudl remain at a constant velocity
-int constantVelocityB = 0;				//The constant velocity that B should remain at
+int stayCVA = 0;					//Indicates that motor A should remain at a constant velocity
+float CVA = 0;						//The constant velocity that A should remain at
+int stayCVB = 0;					//Indicates that motor B shoudl remain at a constant velocity
+float CVB = 0;						//The constant velocity that B should remain at
 
-int currentSpeed = 0;					//Last speed calculated, used for iterative calculations of velocity
-int distanceTraveled = 0;				//Distance traveled for the current function
+float currentSpeed = 0;					//Last speed calculated, used for iterative calculations of velocity
+float distanceTraveled = 0;				//Distance traveled for the current function
 
 //PID variable definitions
 fractional mAabcCoeffs[3] __attribute__ ((space(xmemory)));		//((section (".xbss, bss, xmemory")));
@@ -389,8 +389,8 @@ void InitTMR1(void)
 //
 // Trapezoidal Movement Functions
 //
-// Calculate velocity given distance
-int calcNextTrap(int timeSlice, float maxSpeed, float accel, float decel, int distance, int* distanceTraveled, int* currentSpeed)
+// Calculate the next volocity point on the trapezoid
+int calcNextTrap(float timeSlice, float maxSpeed, float accel, float decel, float distance)
 {
 	// timeSlice is the time interval at which we are measuing points on the trapezoid
 	int nextSpeed	// The next speed that the PID algorithm should aim for
@@ -417,29 +417,102 @@ int calcNextTrap(int timeSlice, float maxSpeed, float accel, float decel, int di
 	return nextSpeed;
 }
 
-/* Greg's obsolete code
-float velocity(float maxSpeed, float accel, float decel, int time)
+// Constant Velocity
+void ConstantVelocity(float timeSlice, float time, float velocity, int dir, int motor)
 {
-	float accelVelocity = accel * time;
-	float decelVelocity = decel * time;
-	
-	if (accelVelocity < maxSpeed)
-		return accelVelocity;
-	else if (decelVelocity < maxSpeed
-		return decelVelocity;
-	else
-		return maxSpeed;
-}
-
-	//float accelTime = maxSpeed / accel;
-	//float decelTime = maxSpeed / decel;
-	
-	float accelDistance = .5 * accel * time * time; // How far I have gone so far
-	float projectedDistance = accelDistance + ((accel * distance) * (accel * distance) / 2 * decel);	// How far I would go if I slow down now
-
-	// slow down if we can't reach our amx speed
-	if (projectedDistance > distance) 
+	if (time <= 0)	// Constant velocity for an infinite amount of time
 	{
-		
+		if (motor == 0)		// Motor A only
+		{
+			stayCVA = 1;
+			CVA = dir * velocity;
+		}
+		else if (motor == 1)	// Motor B only
+		{
+			stayCVB = 1;
+			CVB = dir * velocity;
+		{
+		else			// Both motors
+		{
+			stayCVA = 1;
+			stayCVB = 1;
+			CVA = dir * velocity;
+			CVB = dir * velocity;
+		}
 	}
-*/
+	else	// Constant velocity for a defined ammount of time
+	{
+		int numOfSlices = time / timeSlice;	// How many buffer entries we need
+		int counter = 0;			// Determines when we have generated enough data points
+		
+		if (motor == 0)	// Only motor A
+		{
+			while (counter < numOfSlices)
+			{
+				if (nextSpeedAWriteCounter > NEXT_SPEED_BUFFER_SIZE)	// Have we exceeded our biffer size?
+				{
+					while (nextSpeedAReadCounter >= 0)		// If so, wait until the read counter is back to -1
+					{
+						nextSpeedAWriteCounter = 0;		// restart the buffer
+					}
+				}
+				if (nextSpeedAWriteCounter > nextSpeedAReadCounter)	// If the writter is ahead of the reader, add another point to the array
+				{
+					nextSpeedA[nextSpeedAWriteCounter] = velocity;
+					nextSpeedAWriteCounter++;
+					counter++;
+				}
+			}
+		}
+		else if (motor == 1) // Only motor B
+		{
+			while (counter < numOfSlices)
+			{
+				if (nextSpeedBWriteCounter > NEXT_SPEED_BUFFER_SIZE)	// Have we exceeded our biffer size?
+				{
+					while (nextSpeedBReadCounter >= 0)		// If so, wait until the read counter is back to -1
+					{
+						nextSpeedBWriteCounter = 0;		// restart the buffer
+					}
+				}
+				if (nextSpeedBWriteCounter > nextSpeedBReadCounter)	// If the writter is ahead of the reader, add another point to the array
+				{
+					nextSpeedB[nextSpeedBWriteCounter] = velocity;
+					nextSpeedBWriteCounter++;
+					counter++;
+				}
+			}
+		}
+		else	// Motors A and B
+		{
+			while (counter < numOfSlices)
+			{
+				if (nextSpeedAWriteCounter > NEXT_SPEED_BUFFER_SIZE)	// Have we exceeded our buffer size for buffer A?
+				{
+					while (nextSpeedAReadCounter >= 0)		// If so, wait until the A read counter is back to -1
+					{
+						nextSpeedAWriteCounter = 0;		// restart the buffer
+					}
+				}
+				if (nextSpeedBWriteCounter > NEXT_SPEED_BUFFER_SIZE)	// Have we exceeded our buffer size for buffer B?
+				{
+					while (nextSpeedBReadCounter >= 0)		// If so, wait until the B read counter is back to -1
+					{
+						nextSpeedBWriteCounter = 0;		// restart the buffer
+					}
+				}
+				if (nextSpeedAWriteCounter > nextSpeedAReadCounter && nextSpeedBWriteCounter > nextSpeedBReadCounter)	// If both writters are ahead of the readers, add another point to each array
+				{
+					// Note: In this implementation both arrays move together or not at all
+					nextSpeedA[nextSpeedAWriteCounter] = velocity;
+					nextSpeedB[nextSpeedBWriteCounter] = velocity;				
+					nextSpeedAWriteCounter++;
+					nextSpeedBWriteCounter++;
+					counter++;
+				}
+			}
+		}
+	}
+	
+	PIDCalc = 0;	//Skip the PID calculations in the interupt
+}
