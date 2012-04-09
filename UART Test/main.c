@@ -23,6 +23,8 @@ void InitPid();										//Initialize PID
 void setMotorACoeffs(float kP, float kI, float kD);	//Set PID Gains for motor A
 void setMotorBCoeffs(float kP, float kI, float kD);	//Set PID Gains for motor B
 int calcNextTrap(float timeSlice, float maxSpeed, float accel, float decel, float distance);	// get the next value in the trapezoidal function
+void setup(float diameterA, float diameterB, float spacing, int countsA, int countsB);
+void ConstantVelocity(float timeSlice, float time, float velocity, int dir, int motor);
 
 //Legacy Functions
 void PositionCalculation(void);						// !!Legacy!!
@@ -32,8 +34,8 @@ const int NEXT_SPEED_BUFFER_SIZE = 25;			//Defines the length of the nextSpeed b
 
 //Begin motor control variables
 // Note: "Bool" -> 0 = False, 1 = True
-const int NEXT_SPEED_BUFFER_SIZE = 25;	//Defines the length of the nextSpeed buffer
-int PIDCalc = 1;			//Perform PID algorithm calculations in the interupt? (BOOL)
+int PIDCalcA = 1;			//Perform PID algorithm calculations in the interupt? (BOOL)
+int PIDCalcB = 1;
 
 //Setup variables
 float wheelDiameterA;							//Wheel diameter for wheel attached to motor A
@@ -41,10 +43,16 @@ float wheelDiameterB;							//Wheel diameter for wheel attached to motor B
 float wheelSpacing;								//Spacing between wheels
 int quadCountsA;								//Number of counts per revolution for motor A quadrature encoder
 int quadCountsB;								//Number of counts per revolution for motor B quadrature encoder
+float distancePerCountA;
+float distancePerCountB;
 
 //PID Variables
 tPID motorAPid;									//PID data structure for Motor A
 tPID motorBPid;									//PID data structure for Motor B
+float measuredSpeedA;
+float measuredSpeedB;
+int motorActiveA;
+int motorActiveB;
 
 float nextSpeedA[NEXT_SPEED_BUFFER_SIZE];		//MTRA Ring buffer for storing speeds that the PID algorithm consumes as the control reference
 volatile int nextSpeedAWriteCounter = 0;		//Indicates the next index to be written to in the nextSpeedA buffer
@@ -55,7 +63,8 @@ volatile int nextSpeedBWriteCounter = 0;		//Indicates the next index to be writt
 volatile int nextSpeedBReadCounter = -1;		//Indicates the next index to be read from in the nextSpeedB buffer
 
 volatile int velocity;							//velocity measurement
-int Pos[2] = {0,0};								//last and present position
+int PosA[2] = {0,0};							//last and present position
+int PosB[2] = {0,0};
 
 int stayCVA = 0;					//Indicates that motor A should remain at a constant velocity
 float CVA = 0;						//The constant velocity that A should remain at
@@ -64,6 +73,8 @@ float CVB = 0;						//The constant velocity that B should remain at
 
 float currentSpeed = 0;					//Last speed calculated, used for iterative calculations of velocity
 float distanceTraveled = 0;				//Distance traveled for the current function
+
+float timeSlice = 0.0085;				//Time slice for PID interrupt
 
 //PID variable definitions
 fractional mAabcCoeffs[3] __attribute__ ((space(xmemory)));		//((section (".xbss, bss, xmemory")));
@@ -117,7 +128,7 @@ int main(void)
 	
 	PWM_TMRSTART = 0;			//start counter at 0
 	
-	PWM_TIMEBASE_PER = 408;		//set the timebase period for the pwm module
+	PWM_TIMEBASE_PER = TIMEBASE_PERIOD;	//set the timebase period for the pwm module
 	
 	PWM_CONFbits.PMOD3 = 1; 	// PWM in independent mode
 	PWM_CONFbits.PMOD2 = 1; 	// PWM in independent mode
@@ -129,8 +140,8 @@ int main(void)
 	PWM_CONFbits.PEN2L = 0; 	// PWM Low pin disabled 
 	PWM_CONFbits.PEN1L = 0; 	// PWM Low pin disabled
 
-	MTR_A_DUTY_CYCLE = 408;		//Set duty cycle to 50%
-	MTR_B_DUTY_CYCLE = 408;
+	MTR_A_DUTY_CYCLE = TIMEBASE_PERIOD;		//Set duty cycle to 50%
+	MTR_B_DUTY_CYCLE = TIMEBASE_PERIOD;
 	
 	PWM_TMR_ENABLE = 1;			//Enable the PWM Timerbase
 	
@@ -140,16 +151,12 @@ int main(void)
 	
 	//Set the control reference and measured output
 	//(This is just for testing purposes)
-	motorAPid.controlReference = Q15(0.74);
-	motorBPid.controlReference = Q15(0.74);
-	motorAPid.measuredOutput = Q15(0.453);
-	motorBPid.measuredOutput = Q15(0.453);
+	
 
 	while(1){
 		
 		//Perform PID functions (For testing)
-		PID(&motorAPid);
-		PID(&motorBPid);
+		
 	
 	}	
 }
@@ -173,24 +180,162 @@ void InitPid()
 //Speed Caclulation ISR
 void __attribute__((__interrupt__)) _T1Interrupt(void)
 {
+	int outputA;
+	int outputB;
+	int dirA;
+	int dirB;
+	
 	//First copy the position count to get a snapshot
-	int POSCNTcopy = (int)POSCNT;
+	int POS1CNTcopy = (int)POS1CNT;
+	int POS2CNTcopy = (int)POS2CNT;
 
 	//If the count happens to be less than zero, make it positive
 	//(I need to check this, because i'm not sure it makes sense...)
-	if (POSCNTcopy < 0)
-		POSCNTcopy = -POSCNTcopy;
+	//if (POSCNTcopy < 0)
+	//	POSCNTcopy = -POSCNTcopy;
 
 	//Cycle the old position into the lower array and place the copy
 	//in the new spot
-	Pos[1] = Pos[0];
-	Pos[0] = POSCNTcopy;
+	PosA[1] = PosA[0];
+	PosA[0] = POS1CNTcopy;
+	
+	PosB[1] = PosB[0];
+	PosB[0] = POS2CNTcopy;
 
 	//Calculate velocity
 	//The decimal value 0.0085 needs to be changed based on
 	//the interrupt interval
-	velocity = (Pos[0]-Pos[1])/0.0085;
-
+	measuredSpeedA = (((float) PosA[0] - (float) PosA[1])/timeSlice) * distancePerCountA;
+	measuredSpeedB = (((float) PosB[0] - (float) PosB[1])/timeSlice) * distancePerCountB;
+	
+	if(pidCalcA == 1){
+		if(stayCVA == 1)
+		{
+			motorAPid.controlReference = Q15(CVA);
+		}
+		else
+		{
+			int lookAhead = nextSpeedAReadCounter + 1;
+			if(lookAhead == NEXT_SPEED_BUFFER_SIZE)
+			{
+				lookAhead = 0;
+			}
+			
+			if(lookAhead != nextSpeedAWriteCounter)
+			{
+				nextSpeedAReadCounter = lookAhead;
+			}
+			
+			motorAPid.controlReference = Q15(nextSpeedA[nextSpeedAReadCounter]);
+		}
+		
+		motorAPid.measuredOutput = Q15(measuredSpeedA);
+		PID(&motorAPid);
+		outputA = motorAPid.controlOutput;
+		
+		if(outputA < 0)
+		{
+			if(outputA < -FRACTIONAL_MAX)
+			{
+				outputA = -FRACTIONAL_MAX;
+			}
+			
+			outputA = -outputA;
+			dirA = 0;
+		}
+		else
+		{
+			dirA = 1;
+		}
+		
+		outputA = (outputA/FRACTIONAL_MAX) * DUTY_CYCLE_MAX;
+	}
+	
+	if(pidCalcB == 1){
+		if(stayCVB == 1)
+		{
+			motorBPid.controlReference = Q15(CVB);
+		}
+		else
+		{
+			int lookAhead = nextSpeedBReadCounter + 1;
+			if(lookAhead == NEXT_SPEED_BUFFER_SIZE)
+			{
+				lookAhead = 0;
+			}
+			
+			if(lookAhead != nextSpeedBWriteCounter)
+			{
+				nextSpeedBReadCounter = lookAhead;
+			}
+			
+			motorBPid.controlReference = Q15(nextSpeedB[nextSpeedBReadCounter]);
+		}
+		
+		motorBPid.measuredOutput = Q15(measuredSpeedA);
+		PID(&motorBPid);
+		outputB = motorBPid.controlOutput;
+		
+		if(outputB < 0)
+		{
+			if(outputB < -FRACTIONAL_MAX)
+			{
+				outputB = -FRACTIONAL_MAX;
+			}
+			
+			outputB = -outputA;
+			dirB = 0;
+		}
+		else
+		{
+			dirB = 1;
+		}
+		
+		outputB = (outputB/FRACTIONAL_MAX) * DUTY_CYCLE_MAX;
+	}
+	
+	if(PIDCalcA == 1)
+	{
+		MTR_A_DUTY_CYCLE = outputA;
+		
+		if(dirA == 1)
+		{
+			MTR_A_HIGH_CHANNEL = 1;
+			MTR_A_LO_CHANNEL = 0;
+		}
+		else
+		{
+			MTR_A_LO_CHANNEL = 1;
+			MTR_A_HIGH_CHANNEL = 0;
+		}		
+	}
+	else
+	{
+		MTR_A_HIGH_CHANNEL = 0;
+		MTR_A_LO_CHANNEL = 0;
+	}
+	
+	if(PIDCalcB == 1)
+	{
+		MTR_B_DUTY_CYCLE = outputB;
+		
+		if(dirB == 1)
+		{
+			MTR_B_HIGH_CHANNEL = 1;
+			MTR_B_LO_CHANNEL = 0;
+		}
+		else
+		{
+			MTR_B_LO_CHANNEL = 1;
+			MTR_B_HIGH_CHANNEL = 0;
+		}
+	}
+	else
+	{
+		MTR_B_HIGH_CHANNEL = 0;
+		MTR_B_LO_CHANNEL = 0;
+	}
+		
 	IFS0bits.T1IF = 0; 			// Clear timer 1 interrupt flag	
 }
 
@@ -372,6 +517,21 @@ void InitTMR1(void)
 	return;
 }
 
+//Setup function
+void setup(float diameterA, float diameterB, float spacing, int countsA, int countsB)
+{
+	wheelDiameterA = diameterA;
+	wheelDiameterB = diameterB;
+	wheelSpacing = spacing;
+	quadCountsA = countsA;
+	quadCountsB = countsB;
+	
+	float pi = 3.14159;
+	
+	distancePerCountA = (pi * diameterA)/countsA;
+	distancePerCountB = (pi * diameterB)/countsB; 
+}
+
 //
 // Trapezoidal Movement Functions
 //
@@ -379,7 +539,7 @@ void InitTMR1(void)
 int calcNextTrap(float timeSlice, float maxSpeed, float accel, float decel, float distance)
 {
 	// timeSlice is the time interval at which we are measuing points on the trapezoid
-	int nextSpeed	// The next speed that the PID algorithm should aim for
+	int nextSpeed;	// The next speed that the PID algorithm should aim for
 	
 	// Check to see if we are hitting the maxSpeed
 	if(currentSpeed >= maxSpeed)
@@ -398,7 +558,7 @@ int calcNextTrap(float timeSlice, float maxSpeed, float accel, float decel, floa
 	}
 	
 	distanceTraveled = distanceTraveled + nextSpeed * timeSlice;
-	curSpeed = nextSpeed;
+	currentSpeed = nextSpeed;
 	
 	return nextSpeed;
 }
