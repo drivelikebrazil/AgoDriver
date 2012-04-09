@@ -22,7 +22,9 @@ void InitTMR1(void);								//Initialize the timer for the PID calculation inter
 void InitPid();										//Initialize PID
 void setMotorACoeffs(float kP, float kI, float kD);	//Set PID Gains for motor A
 void setMotorBCoeffs(float kP, float kI, float kD);	//Set PID Gains for motor B
-int calcNextTrap(float timeSlice, float maxSpeed, float accel, float decel, float distance);	// get the next value in the trapezoidal function
+float calcNextTrap(float maxSpeed, float accel, float decel, float distance);	// get the next value in the trapezoidal function
+int ConstantVelocity(float velocity, int dir, int motor);	// Get the next CV value in the buffer
+int stickThisInTheBuffer(float bufferValue, int motors);	// Places a floating point value in nextSpeed for A,B or both
 
 //Legacy Functions
 void PositionCalculation(void);						// !!Legacy!!
@@ -62,8 +64,15 @@ float CVA = 0;						//The constant velocity that A should remain at
 int stayCVB = 0;					//Indicates that motor B shoudl remain at a constant velocity
 float CVB = 0;						//The constant velocity that B should remain at
 
+// Movement calculation Variables
 float currentSpeed = 0;					//Last speed calculated, used for iterative calculations of velocity
 float distanceTraveled = 0;				//Distance traveled for the current function
+int ConstantVelocityCounter = 0;		// Used by constantVelocity to determine if the CV function has generated enough points
+float userProvidedTime = 5;				// How long the user wants the motor(s) to move
+int nextSpeedCount = userProvidedTime/timeSlice;	// How many buffer cells we will need to reach the user's goal
+float timeSlice = .0085;
+int neededDataPoints = userProvidedTime/timeSlice;	// The number of data points needed for a movement command, trucated
+int numberOfGeneratedPoints = 0;	// The number of data points that have been generated so far by a movement command
 
 //PID variable definitions
 fractional mAabcCoeffs[3] __attribute__ ((space(xmemory)));		//((section (".xbss, bss, xmemory")));
@@ -150,7 +159,17 @@ int main(void)
 		//Perform PID functions (For testing)
 		PID(&motorAPid);
 		PID(&motorBPid);
-	
+		
+		// Test Variables
+		float velocity = 2;	// Velocity of 2 m/s
+		int dir = 1;		// Moving forward
+		int motors = 0;		// Testing only motor A
+		
+		// Constant Veolcity Test for 5 seconds
+		while (ConstantVelocity(velocity,dir,motors) == 1)
+		{
+			
+		}
 	}	
 }
 
@@ -376,7 +395,7 @@ void InitTMR1(void)
 // Trapezoidal Movement Functions
 //
 // Calculate the next volocity point on the trapezoid
-int calcNextTrap(float timeSlice, float maxSpeed, float accel, float decel, float distance)
+float calcNextTrap(float maxSpeed, float accel, float decel, float distance)
 {
 	// timeSlice is the time interval at which we are measuing points on the trapezoid
 	int nextSpeed	// The next speed that the PID algorithm should aim for
@@ -397,16 +416,21 @@ int calcNextTrap(float timeSlice, float maxSpeed, float accel, float decel, floa
 		nextSpeed = currentSpeed - (decel * timeSlice);
 	}
 	
+	// Lets do this in the wrapper function
 	distanceTraveled = distanceTraveled + nextSpeed * timeSlice;
 	curSpeed = nextSpeed;
 	
 	return nextSpeed;
 }
-
-// Constant Velocity
-void ConstantVelocity(float timeSlice, float time, float velocity, int dir, int motor)
+//********************************************************
+// Purpose: fill the nexSpeed buffer with values for constant velocity values
+// Return: Success or failure to fill the buffer
+//********************************************************
+int ConstantVelocity(float velocity, int dir, int motor)
 {
-	if (time <= 0)	// Constant velocity for an infinite amount of time
+	PIDCalc = 0;	//Skip the PID calculations in the interupt
+	
+	if (userProvidedTime <= 0)	// Constant velocity for an infinite amount of time
 	{
 		if (motor == 0)		// Motor A only
 		{
@@ -417,7 +441,7 @@ void ConstantVelocity(float timeSlice, float time, float velocity, int dir, int 
 		{
 			stayCVB = 1;
 			CVB = dir * velocity;
-		{
+		}
 		else			// Both motors
 		{
 			stayCVA = 1;
@@ -428,77 +452,81 @@ void ConstantVelocity(float timeSlice, float time, float velocity, int dir, int 
 	}
 	else	// Constant velocity for a defined ammount of time
 	{
-		int numOfSlices = time / timeSlice;	// How many buffer entries we need
-		int counter = 0;			// Determines when we have generated enough data points
-		
-		if (motor == 0)	// Only motor A
+		if(stickThisinTheBuffer((velocity*dir),motor) == 0)	//  If the data was successfully put into the buffer, increment the counter
 		{
-			while (counter < numOfSlices)
-			{
-				if (nextSpeedAWriteCounter > NEXT_SPEED_BUFFER_SIZE)	// Have we exceeded our biffer size?
-				{
-					while (nextSpeedAReadCounter >= 0)		// If so, wait until the read counter is back to -1
-					{
-						nextSpeedAWriteCounter = 0;		// restart the buffer
-					}
-				}
-				if (nextSpeedAWriteCounter > nextSpeedAReadCounter)	// If the writter is ahead of the reader, add another point to the array
-				{
-					nextSpeedA[nextSpeedAWriteCounter] = velocity;
-					nextSpeedAWriteCounter++;
-					counter++;
-				}
-			}
+			numberOfGeneratedPoints++;
 		}
-		else if (motor == 1) // Only motor B
+			
+		if(numberOfGeneratedPoints <= neededDataPoints)
 		{
-			while (counter < numOfSlices)
-			{
-				if (nextSpeedBWriteCounter > NEXT_SPEED_BUFFER_SIZE)	// Have we exceeded our biffer size?
-				{
-					while (nextSpeedBReadCounter >= 0)		// If so, wait until the read counter is back to -1
-					{
-						nextSpeedBWriteCounter = 0;		// restart the buffer
-					}
-				}
-				if (nextSpeedBWriteCounter > nextSpeedBReadCounter)	// If the writter is ahead of the reader, add another point to the array
-				{
-					nextSpeedB[nextSpeedBWriteCounter] = velocity;
-					nextSpeedBWriteCounter++;
-					counter++;
-				}
-			}
+			return 1;	// Status = INCOMPLETE. Run again to generate another point
 		}
-		else	// Motors A and B
+		else
 		{
-			while (counter < numOfSlices)
-			{
-				if (nextSpeedAWriteCounter > NEXT_SPEED_BUFFER_SIZE)	// Have we exceeded our buffer size for buffer A?
-				{
-					while (nextSpeedAReadCounter >= 0)		// If so, wait until the A read counter is back to -1
-					{
-						nextSpeedAWriteCounter = 0;		// restart the buffer
-					}
-				}
-				if (nextSpeedBWriteCounter > NEXT_SPEED_BUFFER_SIZE)	// Have we exceeded our buffer size for buffer B?
-				{
-					while (nextSpeedBReadCounter >= 0)		// If so, wait until the B read counter is back to -1
-					{
-						nextSpeedBWriteCounter = 0;		// restart the buffer
-					}
-				}
-				if (nextSpeedAWriteCounter > nextSpeedAReadCounter && nextSpeedBWriteCounter > nextSpeedBReadCounter)	// If both writters are ahead of the readers, add another point to each array
-				{
-					// Note: In this implementation both arrays move together or not at all
-					nextSpeedA[nextSpeedAWriteCounter] = velocity;
-					nextSpeedB[nextSpeedBWriteCounter] = velocity;				
-					nextSpeedAWriteCounter++;
-					nextSpeedBWriteCounter++;
-					counter++;
-				}
-			}
+			return 0;	// Status = DONE
 		}
 	}
-	
-	PIDCalc = 0;	//Skip the PID calculations in the interupt
+}
+
+//************************************************
+// Purpose: Places a floating point value in the nextSpeed buffer fo A, B or both
+// Returns: success or failure
+//************************************************
+int stickThisInTheBuffer(float bufferValue, int motors)	// don't forget the function prototype
+{
+	if (motors == 0)	// Motor A
+	{
+		if (nextSpeedAReadCounter == nextSpeedAWriteCounter)	// We must wait for the read counter if its being slow
+		{
+			return 1;	// Failure to place the value in the buffer
+		}
+		else
+		{
+			nextSpeedA[nextSpeedAWriteCounter] = bufferValue;	// Place the value in the buffer
+			nextSpeedAWriteCounter++;	// increment the write counter
+			
+			if (nextSpeedAWriteCounter > NEXT_SPEED_BUFFER_SIZE)	// Have we exceeded our biffer size?
+			{
+				nextSpeedAWriteCounter = 0;		// restart the buffer count
+			}
+			
+			return 0;	// Successfully placed the value in the buffer
+		}
+	}
+	if (motors == 1)	// Motor B
+	{
+		if (nextSpeedBReadCounter == nextSpeedBWriteCounter)	// We must wait for the read counter if its being slow
+		{
+			return 1;	// Failure to place the value in the buffer
+		}
+		else
+		{
+			nextSpeedB[nextSpeedBWriteCounter] = bufferValue;	// Place the value in the buffer
+			nextSpeedBWriteCounter++;	// increment the write counter
+			
+			if (nextSpeedBWriteCounter > NEXT_SPEED_BUFFER_SIZE)	// Have we exceeded our biffer size?
+			{
+				nextSpeedBWriteCounter = 0;		// restart the buffer count
+			}
+			
+			return 0;	// successfully replaced the value in the buffer	
+		}
+	}
+	else	// both motors
+	{
+		// For both motors its all or nothing...either both values get placed into the buffer or neither do
+		if ((nextSpeedAReadCounter != nextSpeedAWriteCounter) && (nextSpeedBReadCounter != nextSpeedBWriteCounter))	// We must wait for the read counters if they're being slow
+		{
+			nextSpeedA[nextSpeedAWriteCounter] = bufferValue;
+			nextSpeedB[nextSpeedBWriteCounter] = bufferValue;
+			nextSpeedAWriteCounter++;
+			nextSpeedBWriteCounter++;
+			
+			return 0;	// Successfully placed both values in the buffer
+		}
+		else
+		{
+			return 1;	// Failure to place both values in the buffer
+		}
+	}
 }
