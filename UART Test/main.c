@@ -3,6 +3,9 @@
 #include <stdlib.h>
 #include <dsp.h>
 
+// For some reason this compiler wishes us to use the old way of declaring constants in C...
+#define NEXT_SPEED_BUFFER_SIZE		25
+
 //Set up processor registers
 _FOSCSEL(FNOSC_FRC)									//Use built in oscillator
 _FOSC(POSCMD_NONE & OSCIOFNC_ON)					//Use Oscillator pins as I/O pins is on
@@ -29,12 +32,8 @@ int stickThisInTheBuffer(float bufferValue, int motors);	// Places a floating po
 //Legacy Functions
 void PositionCalculation(void);						// !!Legacy!!
 
-//Motor control constants
-const int NEXT_SPEED_BUFFER_SIZE = 25;			//Defines the length of the nextSpeed buffer
-
 //Begin motor control variables
 // Note: "Bool" -> 0 = False, 1 = True
-const int NEXT_SPEED_BUFFER_SIZE = 25;	//Defines the length of the nextSpeed buffer
 int PIDCalc = 1;			//Perform PID algorithm calculations in the interupt? (BOOL)
 
 //Setup variables
@@ -65,13 +64,12 @@ int stayCVB = 0;					//Indicates that motor B shoudl remain at a constant veloci
 float CVB = 0;						//The constant velocity that B should remain at
 
 // Movement calculation Variables
-float currentSpeed = 0;					//Last speed calculated, used for iterative calculations of velocity
-float distanceTraveled = 0;				//Distance traveled for the current function
-int ConstantVelocityCounter = 0;		// Used by constantVelocity to determine if the CV function has generated enough points
-float userProvidedTime = 5;				// How long the user wants the motor(s) to move
-int nextSpeedCount = userProvidedTime/timeSlice;	// How many buffer cells we will need to reach the user's goal
+float currentSpeed = 0;				//Last speed calculated, used for iterative calculations of velocity
+float distanceTraveled = 0;			//Distance traveled for the current function
+int ConstantVelocityCounter = 0;	// Used by constantVelocity to determine if the CV function has generated enough points
+float userProvidedTime = 0;			// How long the user wants the motor(s) to move
 float timeSlice = .0085;
-int neededDataPoints = userProvidedTime/timeSlice;	// The number of data points needed for a movement command, trucated
+int neededDataPoints;				// The number of data points needed for a movement command, trucated
 int numberOfGeneratedPoints = 0;	// The number of data points that have been generated so far by a movement command
 
 //PID variable definitions
@@ -88,11 +86,13 @@ int main(void)
 
 	//setup internal clock for 80MHz/40MIPS
 	//7.37/2=3.685*43=158.455/2=79.2275
+/*
 	CLKDIVbits.PLLPRE=0; 		// PLLPRE (N2) 0=/2 
 	PLLFBD=41; 			//pll multiplier (M) = +2
 	CLKDIVbits.PLLPOST=0;		// PLLPOST (N1) 0=/2
 	 	
 	while(!OSCCONbits.LOCK);	//wait for PLL to stabilize
+*/
 
 	//Set up UART
 	//InitUART1();
@@ -144,32 +144,31 @@ int main(void)
 	PWM_TMR_ENABLE = 1;			//Enable the PWM Timerbase
 	
 	//Set up PID gains
-	setMotorACoeffs(0.7, 0.2, 0.02);
-	setMotorBCoeffs(0.7, 0.2, 0.02);
+	//setMotorACoeffs(0.7, 0.2, 0.02);
+	//setMotorBCoeffs(0.7, 0.2, 0.02);
 	
 	//Set the control reference and measured output
 	//(This is just for testing purposes)
-	motorAPid.controlReference = Q15(0.74);
-	motorBPid.controlReference = Q15(0.74);
-	motorAPid.measuredOutput = Q15(0.453);
-	motorBPid.measuredOutput = Q15(0.453);
+	//motorAPid.controlReference = Q15(0.74);
+	///motorBPid.controlReference = Q15(0.74);
+	//motorAPid.measuredOutput = Q15(0.453);
+	//motorBPid.measuredOutput = Q15(0.453);
 
 	while(1){
 		
 		//Perform PID functions (For testing)
-		PID(&motorAPid);
-		PID(&motorBPid);
+		//PID(&motorAPid);
+		//PID(&motorBPid);
 		
 		// Test Variables
 		float velocity = 2;	// Velocity of 2 m/s
 		int dir = 1;		// Moving forward
-		int motors = 0;		// Testing only motor A
+		int motors = 1;		// Testing only motor A
+		userProvidedTime = 5;
+		neededDataPoints = userProvidedTime/timeSlice;
 		
 		// Constant Veolcity Test for 5 seconds
-		while (ConstantVelocity(velocity,dir,motors) == 1)
-		{
-			
-		}
+		while (ConstantVelocity(velocity,dir,motors) == 1);
 	}	
 }
 
@@ -391,14 +390,16 @@ void InitTMR1(void)
 	return;
 }
 
-//
-// Trapezoidal Movement Functions
-//
-// Calculate the next volocity point on the trapezoid
+//*******************Trapezoidal Movement Functions*************************//
+
+//**************************************************************
+// Purpose: Calculate the next volocity point on the trapezoid
+// Returns: The next speed to be placed in the buffer
+//**************************************************************
 float calcNextTrap(float maxSpeed, float accel, float decel, float distance)
 {
 	// timeSlice is the time interval at which we are measuing points on the trapezoid
-	int nextSpeed	// The next speed that the PID algorithm should aim for
+	int nextSpeed;	// The next speed that the PID algorithm should aim for
 	
 	// Check to see if we are hitting the maxSpeed
 	if(currentSpeed >= maxSpeed)
@@ -418,7 +419,7 @@ float calcNextTrap(float maxSpeed, float accel, float decel, float distance)
 	
 	// Lets do this in the wrapper function
 	distanceTraveled = distanceTraveled + nextSpeed * timeSlice;
-	curSpeed = nextSpeed;
+	currentSpeed = nextSpeed;
 	
 	return nextSpeed;
 }
@@ -449,10 +450,12 @@ int ConstantVelocity(float velocity, int dir, int motor)
 			CVA = dir * velocity;
 			CVB = dir * velocity;
 		}
+
+		return 0;	// Status = DONE;
 	}
 	else	// Constant velocity for a defined ammount of time
 	{
-		if(stickThisinTheBuffer((velocity*dir),motor) == 0)	//  If the data was successfully put into the buffer, increment the counter
+		if(stickThisInTheBuffer((velocity*dir),motor) == 0)	//  If the data was successfully put into the buffer, increment the counter
 		{
 			numberOfGeneratedPoints++;
 		}
@@ -476,7 +479,7 @@ int stickThisInTheBuffer(float bufferValue, int motors)	// don't forget the func
 {
 	if (motors == 0)	// Motor A
 	{
-		if (nextSpeedAReadCounter == nextSpeedAWriteCounter)	// We must wait for the read counter if its being slow
+		if ((nextSpeedAReadCounter == nextSpeedAWriteCounter) || ((nextSpeedAReadCounter == -1) && (nextSpeedAWriteCounter == (NEXT_SPEED_BUFFER_SIZE-1))))	// We must wait for the read counter if its being slow
 		{
 			return 1;	// Failure to place the value in the buffer
 		}
@@ -485,7 +488,7 @@ int stickThisInTheBuffer(float bufferValue, int motors)	// don't forget the func
 			nextSpeedA[nextSpeedAWriteCounter] = bufferValue;	// Place the value in the buffer
 			nextSpeedAWriteCounter++;	// increment the write counter
 			
-			if (nextSpeedAWriteCounter > NEXT_SPEED_BUFFER_SIZE)	// Have we exceeded our biffer size?
+			if (nextSpeedAWriteCounter >= NEXT_SPEED_BUFFER_SIZE)	// Have we exceeded our biffer size?
 			{
 				nextSpeedAWriteCounter = 0;		// restart the buffer count
 			}
@@ -495,7 +498,7 @@ int stickThisInTheBuffer(float bufferValue, int motors)	// don't forget the func
 	}
 	if (motors == 1)	// Motor B
 	{
-		if (nextSpeedBReadCounter == nextSpeedBWriteCounter)	// We must wait for the read counter if its being slow
+		if ((nextSpeedBReadCounter == nextSpeedBWriteCounter) || ((nextSpeedBReadCounter == -1) && (nextSpeedBWriteCounter == (NEXT_SPEED_BUFFER_SIZE-1))))	// We must wait for the read counter if its being slow
 		{
 			return 1;	// Failure to place the value in the buffer
 		}
@@ -504,7 +507,7 @@ int stickThisInTheBuffer(float bufferValue, int motors)	// don't forget the func
 			nextSpeedB[nextSpeedBWriteCounter] = bufferValue;	// Place the value in the buffer
 			nextSpeedBWriteCounter++;	// increment the write counter
 			
-			if (nextSpeedBWriteCounter > NEXT_SPEED_BUFFER_SIZE)	// Have we exceeded our biffer size?
+			if (nextSpeedBWriteCounter >= NEXT_SPEED_BUFFER_SIZE)	// Have we exceeded our biffer size?
 			{
 				nextSpeedBWriteCounter = 0;		// restart the buffer count
 			}
@@ -515,7 +518,7 @@ int stickThisInTheBuffer(float bufferValue, int motors)	// don't forget the func
 	else	// both motors
 	{
 		// For both motors its all or nothing...either both values get placed into the buffer or neither do
-		if ((nextSpeedAReadCounter != nextSpeedAWriteCounter) && (nextSpeedBReadCounter != nextSpeedBWriteCounter))	// We must wait for the read counters if they're being slow
+		if (((nextSpeedAReadCounter != nextSpeedAWriteCounter) && (nextSpeedBReadCounter != nextSpeedBWriteCounter)) && (((nextSpeedAWriteCounter != (NEXT_SPEED_BUFFER_SIZE-1)) || (nextSpeedAReadCounter != -1)) && ((nextSpeedBWriteCounter != (NEXT_SPEED_BUFFER_SIZE-1)) || (nextSpeedBReadCounter != -1))))// We must wait for the read counters if they're being slow
 		{
 			nextSpeedA[nextSpeedAWriteCounter] = bufferValue;
 			nextSpeedB[nextSpeedBWriteCounter] = bufferValue;
