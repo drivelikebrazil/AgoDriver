@@ -3,6 +3,8 @@
 #include <stdlib.h>
 #include <dsp.h>
 
+#define NEXT_SPEED_BUFFER_SIZE		25
+
 //Set up processor registers
 _FOSCSEL(FNOSC_FRC)									//Use built in oscillator
 _FOSC(POSCMD_NONE & OSCIOFNC_ON)					//Use Oscillator pins as I/O pins is on
@@ -23,12 +25,12 @@ void InitPid();										//Initialize PID
 void setMotorACoeffs(float kP, float kI, float kD);	//Set PID Gains for motor A
 void setMotorBCoeffs(float kP, float kI, float kD);	//Set PID Gains for motor B
 void setup(float diameterA, float diameterB, float spacing, int countsA, int countsB);
+int TrapezoidalMovement(float maxSpeed, float accel, float decel, float distance, int motors, int dir);	// Calculate the next appropriate value in the trapezoidal motion profile and try to place it in the buffer
+int ConstantVelocity(float velocity, int dir, int motor);	// Place the next CV value in the buffer
+int stickThisInTheBuffer(float bufferValue, int motors);	// Places a floating point value in nextSpeed for A,B or both
 
 //Legacy Functions
 void PositionCalculation(void);						// !!Legacy!!
-
-//Motor control constants
-#define NEXT_SPEED_BUFFER_SIZE 24			//Defines the length of the nextSpeed buffer
 
 //Begin motor control variables
 // Note: "Bool" -> 0 = False, 1 = True
@@ -69,10 +71,14 @@ float CVA = 0;						//The constant velocity that A should remain at
 int stayCVB = 0;					//Indicates that motor B shoudl remain at a constant velocity
 float CVB = 0;						//The constant velocity that B should remain at
 
-float currentSpeed = 0;					//Last speed calculated, used for iterative calculations of velocity
-float distanceTraveled = 0;				//Distance traveled for the current function
-
-float timeSlice = 0.0085;				//Time slice for PID interrupt
+// Movement calculation Variables
+float currentSpeed = 0;				//Last speed calculated, used for iterative calculations of velocity
+float distanceTraveled = 0;			//Distance traveled for the current function
+int ConstantVelocityCounter = 0;	// Used by constantVelocity to determine if the CV function has generated enough points
+float userProvidedTime = 0;			// How long the user wants the motor(s) to move
+float timeSlice = .1;//.0085;
+int neededDataPoints;				// The number of data points needed for a movement command, trucated
+int numberOfGeneratedPoints = 0;	// The number of data points that have been generated so far by a movement command
 
 //PID variable definitions
 fractional mAabcCoeffs[3] __attribute__ ((space(xmemory)));		//((section (".xbss, bss, xmemory")));
@@ -88,11 +94,13 @@ int main(void)
 
 	//setup internal clock for 80MHz/40MIPS
 	//7.37/2=3.685*43=158.455/2=79.2275
-	//CLKDIVbits.PLLPRE=0; 		// PLLPRE (N2) 0=/2 
-	//PLLFBD=41; 			//pll multiplier (M) = +2
-	//CLKDIVbits.PLLPOST=0;		// PLLPOST (N1) 0=/2
+/*
+	CLKDIVbits.PLLPRE=0; 		// PLLPRE (N2) 0=/2 
+	PLLFBD=41; 			//pll multiplier (M) = +2
+	CLKDIVbits.PLLPOST=0;		// PLLPOST (N1) 0=/2
 	 	
-	//while(!OSCCONbits.LOCK);	//wait for PLL to stabilize
+	while(!OSCCONbits.LOCK);	//wait for PLL to stabilize
+*/
 
 	//Set up UART
 	//InitUART1();
@@ -152,12 +160,34 @@ int main(void)
 	
 	//Set the control reference and measured output
 	//(This is just for testing purposes)
-	
+	//motorAPid.controlReference = Q15(0.74);
+	///motorBPid.controlReference = Q15(0.74);
+	//motorAPid.measuredOutput = Q15(0.453);
+	//motorBPid.measuredOutput = Q15(0.453);
 
-	while(1)
-	{
+	// Test Variables
+	float velocity = 2;	// Velocity of 2 m/s
+	float accel = 1;
+	float decel = 1;
+	int dir = 1;		// Moving forward
+	int motors = 0;		// Testing only motor A
+	float distance = 10;
+	//userProvidedTime = 5*timeSlice;
+	//neededDataPoints = userProvidedTime/timeSlice;
+
+//	while(1){
 		
-	}	
+		//Perform PID functions (For testing)
+		//PID(&motorAPid);
+		//PID(&motorBPid);
+		
+		// Trapezoidal movement 
+		while (TrapezoidalMovement(velocity, accel, decel, distance, motors, dir) == 1)
+		{
+			nextSpeedAReadCounter++;
+		}
+//	}	
+	return 0;
 }
 
 //Initialize PID
@@ -529,4 +559,202 @@ void setup(float diameterA, float diameterB, float spacing, int countsA, int cou
 	
 	distancePerCountA = (pi * diameterA)/countsA;
 	distancePerCountB = (pi * diameterB)/countsB; 
+}
+
+//**************************************************Movement Functions************************************************************//
+
+//**************************************************************
+// Purpose: Calculate the next volocity point on the trapezoid and place it in the buffer
+// Returns: Whether or not another point was added to the buffer
+//**************************************************************
+int TrapezoidalMovement(float maxSpeed, float accel, float decel, float distance, int motors, int dir)
+{
+	if (motors == 0)
+	{
+		pidCalcA = 1;
+	}
+	else if (motors == 1)
+	{
+		pidCalcB = 1;
+	}
+	else
+	{
+		pidCalcA = 1;
+		pidCalcB = 1;
+	}
+
+	float nextSpeed;	// The next speed that the PID algorithm should aim for
+	
+	// Check to see if we are hitting the maxSpeed
+	if(currentSpeed >= maxSpeed)
+	{
+		nextSpeed = maxSpeed;
+	}
+	else	// If not, assume we are accelrating and calculate nextSpeed
+	{
+		nextSpeed = currentSpeed + (accel*timeSlice);
+	}
+	
+	// If we are going to overshoot our target using the current nextSpeed, then change nextSpeed so we are decelerating
+	if ((distanceTraveled + (nextSpeed * timeSlice)) > distance)
+	{
+		nextSpeed = currentSpeed - (decel * timeSlice);
+	}
+	
+	// Place nextSpeed into the buffer, and if it happened successfully then update currentSpeed
+	if (stickThisInTheBuffer((nextSpeed*dir), motors) == 0)
+	{
+		// We have generated another data point
+		numberOfGeneratedPoints++;	
+		
+		// Calculate the ammount of positive distance we have traveled regaurdless of dirrection
+		distanceTraveled = distanceTraveled + nextSpeed*timeSlice;
+		currentSpeed = nextSpeed;
+		
+		if(distanceTraveled < distance)
+		{
+			return 1;	// Status = INCOMPLETE. Run again to generate another point
+		}
+		else
+		{
+			pidCalcA = 0;
+			pidCalcB = 0;
+			return 0;	// Status = DONE
+		}
+	}
+	else	// Don't update anything because we haven't "gone anywhere" this time
+	{
+		return 1;	// Status = INCOMPLETE. Run again to generate another point
+	}
+}
+
+//********************************************************
+// Purpose: fill the nexSpeed buffer with values for constant velocity values
+// Return: Success or failure to fill the buffer
+//********************************************************
+int ConstantVelocity(float velocity, int dir, int motor)
+{
+	if (motor == 0)
+	{
+		pidCalcA = 1;
+	}
+	else if (motor == 1)
+	{
+		pidCalcB = 1;
+	}
+	else
+	{
+		pidCalcA = 1;
+		pidCalcB = 1;
+	}
+	
+	if (userProvidedTime <= 0)	// Constant velocity for an infinite amount of time
+	{
+		if (motor == 0)		// Motor A only
+		{
+			stayCVA = 1;
+			CVA = dir * velocity;
+		}
+		else if (motor == 1)	// Motor B only
+		{
+			stayCVB = 1;
+			CVB = dir * velocity;
+		}
+		else			// Both motors
+		{
+			stayCVA = 1;
+			stayCVB = 1;
+			CVA = dir * velocity;
+			CVB = dir * velocity;
+		}
+
+		pidCalcA = 0;
+		pidCalcB = 0;
+		return 0;	// Status = DONE;
+	}
+	else	// Constant velocity for a defined ammount of time
+	{
+		if(stickThisInTheBuffer((velocity*dir),motor) == 0)	//  If the data was successfully put into the buffer, increment the counter
+		{
+			numberOfGeneratedPoints++;
+			
+			if(numberOfGeneratedPoints < neededDataPoints)
+			{
+				return 1;	// Status = INCOMPLETE. Run again to generate another point
+			}
+			else
+			{
+				pidCalcA = 0;
+				pidCalcB = 0;
+				return 0;	// Status = DONE
+			}
+		}
+		else
+		{
+			return 1;	// Status = INCOMPLETE. Run again to generate another point
+		}
+	}
+}
+
+//************************************************
+// Purpose: Places a floating point value in the nextSpeed buffer fo A, B or both
+// Returns: success or failure
+//************************************************
+int stickThisInTheBuffer(float bufferValue, int motors)	// don't forget the function prototype
+{
+	if (motors == 0)	// Motor A
+	{
+		if ((nextSpeedAReadCounter == nextSpeedAWriteCounter) || ((nextSpeedAReadCounter == -1) && (nextSpeedAWriteCounter == (NEXT_SPEED_BUFFER_SIZE-1))))	// We must wait for the read counter if its being slow
+		{
+			return 1;	// Failure to place the value in the buffer
+		}
+		else
+		{
+			nextSpeedA[nextSpeedAWriteCounter] = bufferValue;	// Place the value in the buffer
+			nextSpeedAWriteCounter++;	// increment the write counter
+			
+			if (nextSpeedAWriteCounter >= NEXT_SPEED_BUFFER_SIZE)	// Have we exceeded our biffer size?
+			{
+				nextSpeedAWriteCounter = 0;		// restart the buffer count
+			}
+			
+			return 0;	// Successfully placed the value in the buffer
+		}
+	}
+	if (motors == 1)	// Motor B
+	{
+		if ((nextSpeedBReadCounter == nextSpeedBWriteCounter) || ((nextSpeedBReadCounter == -1) && (nextSpeedBWriteCounter == (NEXT_SPEED_BUFFER_SIZE-1))))	// We must wait for the read counter if its being slow
+		{
+			return 1;	// Failure to place the value in the buffer
+		}
+		else
+		{
+			nextSpeedB[nextSpeedBWriteCounter] = bufferValue;	// Place the value in the buffer
+			nextSpeedBWriteCounter++;	// increment the write counter
+			
+			if (nextSpeedBWriteCounter >= NEXT_SPEED_BUFFER_SIZE)	// Have we exceeded our biffer size?
+			{
+				nextSpeedBWriteCounter = 0;		// restart the buffer count
+			}
+			
+			return 0;	// successfully replaced the value in the buffer	
+		}
+	}
+	else	// both motors
+	{
+		// For both motors its all or nothing...either both values get placed into the buffer or neither do
+		if (((nextSpeedAReadCounter != nextSpeedAWriteCounter) && (nextSpeedBReadCounter != nextSpeedBWriteCounter)) && (((nextSpeedAWriteCounter != (NEXT_SPEED_BUFFER_SIZE-1)) || (nextSpeedAReadCounter != -1)) && ((nextSpeedBWriteCounter != (NEXT_SPEED_BUFFER_SIZE-1)) || (nextSpeedBReadCounter != -1))))// We must wait for the read counters if they're being slow
+		{
+			nextSpeedA[nextSpeedAWriteCounter] = bufferValue;
+			nextSpeedB[nextSpeedBWriteCounter] = bufferValue;
+			nextSpeedAWriteCounter++;
+			nextSpeedBWriteCounter++;
+			
+			return 0;	// Successfully placed both values in the buffer
+		}
+		else
+		{
+			return 1;	// Failure to place both values in the buffer
+		}
+	}
 }
