@@ -25,8 +25,8 @@ void InitTMR1(void);								//Initialize the timer for the PID calculation inter
 void InitPid();										//Initialize PID
 void setMotorACoeffs(float kP, float kI, float kD);	//Set PID Gains for motor A
 void setMotorBCoeffs(float kP, float kI, float kD);	//Set PID Gains for motor B
-float calcNextTrap(float maxSpeed, float accel, float decel, float distance);	// get the next value in the trapezoidal function
-int ConstantVelocity(float velocity, int dir, int motor);	// Get the next CV value in the buffer
+int TrapezoidalMovement(float maxSpeed, float accel, float decel, float distance, int motors, int dir);	// Calculate the next appropriate value in the trapezoidal motion profile and try to place it in the buffer
+int ConstantVelocity(float velocity, int dir, int motor);	// Place the next CV value in the buffer
 int stickThisInTheBuffer(float bufferValue, int motors);	// Places a floating point value in nextSpeed for A,B or both
 
 //Legacy Functions
@@ -34,7 +34,8 @@ void PositionCalculation(void);						// !!Legacy!!
 
 //Begin motor control variables
 // Note: "Bool" -> 0 = False, 1 = True
-int PIDCalc = 1;			//Perform PID algorithm calculations in the interupt? (BOOL)
+int pidCalcA = 0;			//Perform PID algorithm calculations in the interupt? (BOOL)
+int pidCalcB = 0;
 
 //Setup variables
 float wheelDiameterA;							//Wheel diameter for wheel attached to motor A
@@ -68,7 +69,7 @@ float currentSpeed = 0;				//Last speed calculated, used for iterative calculati
 float distanceTraveled = 0;			//Distance traveled for the current function
 int ConstantVelocityCounter = 0;	// Used by constantVelocity to determine if the CV function has generated enough points
 float userProvidedTime = 0;			// How long the user wants the motor(s) to move
-float timeSlice = .0085;
+float timeSlice = .1;//.0085;
 int neededDataPoints;				// The number of data points needed for a movement command, trucated
 int numberOfGeneratedPoints = 0;	// The number of data points that have been generated so far by a movement command
 
@@ -154,22 +155,29 @@ int main(void)
 	//motorAPid.measuredOutput = Q15(0.453);
 	//motorBPid.measuredOutput = Q15(0.453);
 
-	while(1){
+	// Test Variables
+	float velocity = 2;	// Velocity of 2 m/s
+	float accel = 1;
+	float decel = 1;
+	int dir = 1;		// Moving forward
+	int motors = 0;		// Testing only motor A
+	float distance = 10;
+	//userProvidedTime = 5*timeSlice;
+	//neededDataPoints = userProvidedTime/timeSlice;
+
+//	while(1){
 		
 		//Perform PID functions (For testing)
 		//PID(&motorAPid);
 		//PID(&motorBPid);
 		
-		// Test Variables
-		float velocity = 2;	// Velocity of 2 m/s
-		int dir = 1;		// Moving forward
-		int motors = 1;		// Testing only motor A
-		userProvidedTime = 5;
-		neededDataPoints = userProvidedTime/timeSlice;
-		
-		// Constant Veolcity Test for 5 seconds
-		while (ConstantVelocity(velocity,dir,motors) == 1);
-	}	
+		// Trapezoidal movement 
+		while (TrapezoidalMovement(velocity, accel, decel, distance, motors, dir) == 1)
+		{
+			nextSpeedAReadCounter++;
+		}
+//	}	
+	return 0;
 }
 
 //Initialize PID
@@ -390,46 +398,92 @@ void InitTMR1(void)
 	return;
 }
 
-//*******************Trapezoidal Movement Functions*************************//
+//**************************************************Movement Functions************************************************************//
 
 //**************************************************************
-// Purpose: Calculate the next volocity point on the trapezoid
-// Returns: The next speed to be placed in the buffer
+// Purpose: Calculate the next volocity point on the trapezoid and place it in the buffer
+// Returns: Whether or not another point was added to the buffer
 //**************************************************************
-float calcNextTrap(float maxSpeed, float accel, float decel, float distance)
+int TrapezoidalMovement(float maxSpeed, float accel, float decel, float distance, int motors, int dir)
 {
-	// timeSlice is the time interval at which we are measuing points on the trapezoid
-	int nextSpeed;	// The next speed that the PID algorithm should aim for
+	if (motors == 0)
+	{
+		pidCalcA = 1;
+	}
+	else if (motors == 1)
+	{
+		pidCalcB = 1;
+	}
+	else
+	{
+		pidCalcA = 1;
+		pidCalcB = 1;
+	}
+
+	float nextSpeed;	// The next speed that the PID algorithm should aim for
 	
 	// Check to see if we are hitting the maxSpeed
 	if(currentSpeed >= maxSpeed)
 	{
 		nextSpeed = maxSpeed;
 	}
-	else	// If not, assume we are accelerating and calculate nextSpeed
+	else	// If not, assume we are accelrating and calculate nextSpeed
 	{
-		nextSpeed = currentSpeed + (accel * timeSlice);
+		nextSpeed = currentSpeed + (accel*timeSlice);
 	}
 	
-	// If we are going to overshoot our target b
+	// If we are going to overshoot our target using the current nextSpeed, then change nextSpeed so we are decelerating
 	if ((distanceTraveled + (nextSpeed * timeSlice)) > distance)
 	{
 		nextSpeed = currentSpeed - (decel * timeSlice);
 	}
 	
-	// Lets do this in the wrapper function
-	distanceTraveled = distanceTraveled + nextSpeed * timeSlice;
-	currentSpeed = nextSpeed;
-	
-	return nextSpeed;
+	// Place nextSpeed into the buffer, and if it happened successfully then update currentSpeed
+	if (stickThisInTheBuffer((nextSpeed*dir), motors) == 0)
+	{
+		// We have generated another data point
+		numberOfGeneratedPoints++;	
+		
+		// Calculate the ammount of positive distance we have traveled regaurdless of dirrection
+		distanceTraveled = distanceTraveled + nextSpeed*timeSlice;
+		currentSpeed = nextSpeed;
+		
+		if(distanceTraveled < distance)
+		{
+			return 1;	// Status = INCOMPLETE. Run again to generate another point
+		}
+		else
+		{
+			pidCalcA = 0;
+			pidCalcB = 0;
+			return 0;	// Status = DONE
+		}
+	}
+	else	// Don't update anything because we haven't "gone anywhere" this time
+	{
+		return 1;	// Status = INCOMPLETE. Run again to generate another point
+	}
 }
+
 //********************************************************
 // Purpose: fill the nexSpeed buffer with values for constant velocity values
 // Return: Success or failure to fill the buffer
 //********************************************************
 int ConstantVelocity(float velocity, int dir, int motor)
 {
-	PIDCalc = 0;	//Skip the PID calculations in the interupt
+	if (motor == 0)
+	{
+		pidCalcA = 1;
+	}
+	else if (motor == 1)
+	{
+		pidCalcB = 1;
+	}
+	else
+	{
+		pidCalcA = 1;
+		pidCalcB = 1;
+	}
 	
 	if (userProvidedTime <= 0)	// Constant velocity for an infinite amount of time
 	{
@@ -451,6 +505,8 @@ int ConstantVelocity(float velocity, int dir, int motor)
 			CVB = dir * velocity;
 		}
 
+		pidCalcA = 0;
+		pidCalcB = 0;
 		return 0;	// Status = DONE;
 	}
 	else	// Constant velocity for a defined ammount of time
@@ -458,15 +514,21 @@ int ConstantVelocity(float velocity, int dir, int motor)
 		if(stickThisInTheBuffer((velocity*dir),motor) == 0)	//  If the data was successfully put into the buffer, increment the counter
 		{
 			numberOfGeneratedPoints++;
-		}
 			
-		if(numberOfGeneratedPoints <= neededDataPoints)
-		{
-			return 1;	// Status = INCOMPLETE. Run again to generate another point
+			if(numberOfGeneratedPoints < neededDataPoints)
+			{
+				return 1;	// Status = INCOMPLETE. Run again to generate another point
+			}
+			else
+			{
+				pidCalcA = 0;
+				pidCalcB = 0;
+				return 0;	// Status = DONE
+			}
 		}
 		else
 		{
-			return 0;	// Status = DONE
+			return 1;	// Status = INCOMPLETE. Run again to generate another point
 		}
 	}
 }
