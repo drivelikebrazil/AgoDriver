@@ -30,12 +30,12 @@ void ConstantVelocity(float timeSlice, float time, float velocity, int dir, int 
 void PositionCalculation(void);						// !!Legacy!!
 
 //Motor control constants
-const int NEXT_SPEED_BUFFER_SIZE = 25;			//Defines the length of the nextSpeed buffer
+#define NEXT_SPEED_BUFFER_SIZE 24			//Defines the length of the nextSpeed buffer
 
 //Begin motor control variables
 // Note: "Bool" -> 0 = False, 1 = True
-int PIDCalcA = 1;			//Perform PID algorithm calculations in the interupt? (BOOL)
-int PIDCalcB = 1;
+int pidCalcA = 1;			//Perform PID algorithm calculations in the interupt? (BOOL)
+int pidCalcB = 1;
 
 //Setup variables
 float wheelDiameterA;							//Wheel diameter for wheel attached to motor A
@@ -90,17 +90,20 @@ int main(void)
 
 	//setup internal clock for 80MHz/40MIPS
 	//7.37/2=3.685*43=158.455/2=79.2275
-	CLKDIVbits.PLLPRE=0; 		// PLLPRE (N2) 0=/2 
-	PLLFBD=41; 			//pll multiplier (M) = +2
-	CLKDIVbits.PLLPOST=0;		// PLLPOST (N1) 0=/2
+	//CLKDIVbits.PLLPRE=0; 		// PLLPRE (N2) 0=/2 
+	//PLLFBD=41; 			//pll multiplier (M) = +2
+	//CLKDIVbits.PLLPOST=0;		// PLLPOST (N1) 0=/2
 	 	
-	while(!OSCCONbits.LOCK);	//wait for PLL to stabilize
+	//while(!OSCCONbits.LOCK);	//wait for PLL to stabilize
 
 	//Set up UART
 	//InitUART1();
 	
 	//Set up Quadrature Encoder Interface A
 	//InitQEI1();
+
+	//Set up PID
+	InitPid();
 
 	//Set up timer 1 (Interrupts for velocity calculations)
 	//InitTMR1();
@@ -153,10 +156,10 @@ int main(void)
 	//(This is just for testing purposes)
 	
 
-	while(1){
+	while(1)
+	{
 		
-		//Perform PID functions (For testing)
-		
+		//Perform PID functions (For testing)	
 	
 	}	
 }
@@ -248,7 +251,7 @@ void __attribute__((__interrupt__)) _T1Interrupt(void)
 			dirA = 1;
 		}
 		
-		outputA = (outputA/FRACTIONAL_MAX) * DUTY_CYCLE_MAX;
+		outputA = ((double)outputA/(double)FRACTIONAL_MAX) * DUTY_CYCLE_MAX;
 	}
 	
 	if(pidCalcB == 1){
@@ -291,10 +294,10 @@ void __attribute__((__interrupt__)) _T1Interrupt(void)
 			dirB = 1;
 		}
 		
-		outputB = (outputB/FRACTIONAL_MAX) * DUTY_CYCLE_MAX;
+		outputB = ((double)outputB/(double)FRACTIONAL_MAX) * DUTY_CYCLE_MAX;
 	}
 	
-	if(PIDCalcA == 1)
+	if(pidCalcA == 1)
 	{
 		MTR_A_DUTY_CYCLE = outputA;
 		
@@ -315,7 +318,7 @@ void __attribute__((__interrupt__)) _T1Interrupt(void)
 		MTR_A_LO_CHANNEL = 0;
 	}
 	
-	if(PIDCalcB == 1)
+	if(pidCalcB == 1)
 	{
 		MTR_B_DUTY_CYCLE = outputB;
 		
@@ -577,7 +580,7 @@ void ConstantVelocity(float timeSlice, float time, float velocity, int dir, int 
 		{
 			stayCVB = 1;
 			CVB = dir * velocity;
-		{
+		}
 		else			// Both motors
 		{
 			stayCVA = 1;
@@ -660,5 +663,5 @@ void ConstantVelocity(float timeSlice, float time, float velocity, int dir, int 
 		}
 	}
 	
-	PIDCalc = 0;	//Skip the PID calculations in the interupt
+	//PIDCalc = 0;	//Skip the PID calculations in the interupt
 }

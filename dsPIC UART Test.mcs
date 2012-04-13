@@ -2,7 +2,7 @@
 MagicCookie={0b13fe8c-dfe0-40eb-8900-6712719559a7}
 Version=1.0
 [File000]
-Location=D:\Dropbox\My Computers\Classes\Systems\AgoDriver\main.o
+Location=H:\drivelikebrazil\git\AgoDriver\main.o
 Folder=Intermediary
 DeviceName=dsPIC33FJ128MC802
 LanguageToolSuiteID={479DDE59-4D56-455E-855E-FFF59A3DB57E}
@@ -15,7 +15,7 @@ ToolArgsString=-g -Wall -mlarge-data
 TraceCmdString=
 DebugOptions=
 [File001]
-Location=D:\Dropbox\My Computers\Classes\Systems\AgoDriver\dsPIC UART Test.cof
+Location=H:\drivelikebrazil\git\AgoDriver\dsPIC UART Test.cof
 Folder=Output
 DeviceName=dsPIC33FJ128MC802
 LanguageToolSuiteID={479DDE59-4D56-455E-855E-FFF59A3DB57E}
@@ -28,7 +28,7 @@ ToolArgsString=-o"$(BINDIR_)$(TARGETBASE).$(TARGETSUFFIX)" -Map="$(BINDIR_)$(TAR
 TraceCmdString=
 DebugOptions=
 [File002]
-Location=D:\Dropbox\My Computers\Classes\Systems\AgoDriver\dsPIC UART Test.hex
+Location=H:\drivelikebrazil\git\AgoDriver\dsPIC UART Test.hex
 Folder=Output
 DeviceName=dsPIC33FJ128MC802
 LanguageToolSuiteID={479DDE59-4D56-455E-855E-FFF59A3DB57E}
