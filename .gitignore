@@ -1,6 +1,15 @@
+<<<<<<< HEAD
+*.hex
+*.cof
+*.map
+*.mcs
+*.mcw
+*.mcp
+=======
 *.hex
 *.cof
 *.map
 *.mcw
 *.mcs
 *.mcp
+>>>>>>> 5ad0ab1135d35ee7ffb58fec32850ae4c673fb07
