@@ -25,6 +25,7 @@ void InitTMR1(void);								//Initialize the timer for the PID calculation inter
 void InitPid();										//Initialize PID
 void setMotorACoeffs(float kP, float kI, float kD);	//Set PID Gains for motor A
 void setMotorBCoeffs(float kP, float kI, float kD);	//Set PID Gains for motor B
+float calcNextTrap(float maxSpeed, float * currentSpeed, float accel, float decel, float distance, float * distanceTraveled);	// Calculates next speed values for a trapezoidal movement profile
 int TrapezoidalMovement(float maxSpeed, float accel, float decel, float distance, int motors, int dir);	// Calculate the next appropriate value in the trapezoidal motion profile and try to place it in the buffer
 int ConstantVelocity(float velocity, int dir, int motor);	// Place the next CV value in the buffer
 int stickThisInTheBuffer(float bufferValue, int motors);	// Places a floating point value in nextSpeed for A,B or both
@@ -65,8 +66,10 @@ int stayCVB = 0;					//Indicates that motor B shoudl remain at a constant veloci
 float CVB = 0;						//The constant velocity that B should remain at
 
 // Movement calculation Variables
-float currentSpeed = 0;				//Last speed calculated, used for iterative calculations of velocity
-float distanceTraveled = 0;			//Distance traveled for the current function
+float currentSpeedA = 0;				//Last speed calculated, used for iterative calculations of velocity
+float currentSpeedB = 0;
+float distanceTraveledA= 0;			//Distance traveled for the current function
+float distanceTraveledB = 0;
 int ConstantVelocityCounter = 0;	// Used by constantVelocity to determine if the CV function has generated enough points
 float userProvidedTime = 0;			// How long the user wants the motor(s) to move
 float timeSlice = .1;//.0085;
@@ -161,7 +164,7 @@ int main(void)
 	float decel = 1;
 	int dir = 1;		// Moving forward
 	int motors = 0;		// Testing only motor A
-	float distance = 10;
+	float distance = 5;
 	//userProvidedTime = 5*timeSlice;
 	//neededDataPoints = userProvidedTime/timeSlice;
 
@@ -175,6 +178,7 @@ int main(void)
 		while (TrapezoidalMovement(velocity, accel, decel, distance, motors, dir) == 1)
 		{
 			nextSpeedAReadCounter++;
+			//nextSpeedBReadCounter++;
 		}
 //	}	
 	return 0;
@@ -401,73 +405,182 @@ void InitTMR1(void)
 //**************************************************Movement Functions************************************************************//
 
 //**************************************************************
-// Purpose: Calculate the next volocity point on the trapezoid and place it in the buffer
-// Returns: Whether or not another point was added to the buffer
+// Purpose: Calculates values for a trapezoidal movement profile and places them in the buffer
+// Returns: Completion status
+//					1 = incomplete
+//					0 = done
 //**************************************************************
 int TrapezoidalMovement(float maxSpeed, float accel, float decel, float distance, int motors, int dir)
 {
-	if (motors == 0)
+	float nextSpeedA = 0;
+	float nextSpeedB = 0;
+	int distanceMetA = -1;
+	int distanceMetB = -1;
+	
+	if (motors != 1)	// Motor A is active
 	{
 		pidCalcA = 1;
-	}
-	else if (motors == 1)
-	{
-		pidCalcB = 1;
-	}
-	else
-	{
-		pidCalcA = 1;
-		pidCalcB = 1;
-	}
-
-	float nextSpeed;	// The next speed that the PID algorithm should aim for
-	
-	// Check to see if we are hitting the maxSpeed
-	if(currentSpeed >= maxSpeed)
-	{
-		nextSpeed = maxSpeed;
-	}
-	else	// If not, assume we are accelrating and calculate nextSpeed
-	{
-		nextSpeed = currentSpeed + (accel*timeSlice);
-	}
-	
-	// If we are going to overshoot our target using the current nextSpeed, then change nextSpeed so we are decelerating
-	if ((distanceTraveled + (nextSpeed * timeSlice)) > distance)
-	{
-		nextSpeed = currentSpeed - (decel * timeSlice);
-	}
-	
-	// Place nextSpeed into the buffer, and if it happened successfully then update currentSpeed
-	if (stickThisInTheBuffer((nextSpeed*dir), motors) == 0)
-	{
-		// We have generated another data point
-		numberOfGeneratedPoints++;	
+		nextSpeedA = calcNextTrap(maxSpeed, &currentSpeedA, accel, decel, distance, &distanceTraveledA);	// The next speed that the PID algorithm should aim for
 		
-		// Calculate the ammount of positive distance we have traveled regaurdless of dirrection
-		distanceTraveled = distanceTraveled + nextSpeed*timeSlice;
-		currentSpeed = nextSpeed;
-		
-		if(distanceTraveled < distance)
-		{
-			return 1;	// Status = INCOMPLETE. Run again to generate another point
+		// Place nextSpeed into the buffer, and if it happened successfully then update currentSpeed
+		if (stickThisInTheBuffer((nextSpeedA * dir), 0) == 0)
+		{			
+			if (nextSpeedA == 0)
+			{
+				distanceTraveledA = distance;
+			}
+			else
+			{
+				// Calculate the ammount of positive distance we have traveled regaurdless of dirrection
+				distanceTraveledA = distanceTraveledA + nextSpeedA*timeSlice;
+			}
+			
+			currentSpeedA = nextSpeedA;
+			
+			// If we have met our distance requirement for this motor then indicate so
+			if(distanceTraveledA < distance)
+			{
+				distanceMetA  = 1;	// We have not met our goal
+			}
+			else
+			{
+				distanceMetA = 0;	// We have met our goal
+			}
 		}
 		else
+		{
+			distanceMetA = 1;	// We have not met our goal
+		}
+	}
+	
+	if (motors != 0)	// Motor B is active
+	{
+		pidCalcB = 1;
+		nextSpeedB = calcNextTrap(maxSpeed, &currentSpeedB, accel, decel, distance, &distanceTraveledB);	// The next speed that the PID algorithm should aim for
+		
+		// Place nextSpeed into the buffer, and if it happened successfully then update currentSpeed
+		if (stickThisInTheBuffer((nextSpeedB * dir), 1) == 0)
+		{
+			if (nextSpeedB == 0)
+			{
+				distanceTraveledB = distance;
+			}
+			else
+			{
+				// Calculate the ammount of positive distance we have traveled regaurdless of dirrection
+				distanceTraveledB= distanceTraveledB + nextSpeedB*timeSlice;
+			}
+			
+			currentSpeedB = nextSpeedB;
+			
+			// If we have met our distance requirement for this motor then indicate so
+			if(distanceTraveledB < distance)
+			{
+				distanceMetB = 1;	// We have not met our goal
+			}
+			else
+			{
+				distanceMetB = 0;	// We have met our goal
+			}
+		}
+		else
+		{
+			distanceMetB = 1; // We have not met our goal
+		}
+	}
+
+	// Determine if the rapezoidal movement function is done
+	if (motors == 0)	// motor A only
+	{
+		if (distanceMetA == 0)
+		{
+			pidCalcA = 0;
+			return 0;	// Status = DONE
+		}
+		else
+		{
+			return 1;	// Status == INCOMPLETE
+		}
+	}
+	else if (motors == 1)	// Motor B only
+	{
+		if (distanceMetB == 0)
+		{
+			pidCalcB = 0;
+			return 0;	// Status = DONE
+		}
+		else
+		{
+			return 1;	// Status = INCOMPLETE
+		}
+	}
+	else	// Motors A and B
+	{
+		if ((distanceMetA == 0) && (distanceMetB == 0))
 		{
 			pidCalcA = 0;
 			pidCalcB = 0;
 			return 0;	// Status = DONE
 		}
-	}
-	else	// Don't update anything because we haven't "gone anywhere" this time
+		else
+		{
+			return 1;	// Status = INCOMPLETE
+		}
+	}	
+}
+
+//**************************************************************
+// Purpose: Calculate the next volocity point on the trapezoid
+// Returns: The next speed to be placed in the buffer
+//**************************************************************
+float calcNextTrap(float maxSpeed, float* currentSpeed, float accel, float decel, float distance, float* distanceTraveled)
+{
+	// timeSlice is the time interval at which we are measuing points on the trapezoid
+	float nextSpeed; // The next speed that the PID algorithm should aim for
+
+	// Check to see if we are hitting the maxSpeed
+	if(*currentSpeed >= maxSpeed)
 	{
-		return 1;	// Status = INCOMPLETE. Run again to generate another point
+		nextSpeed = maxSpeed;
 	}
+	else // If not, assume we are accelerating and calculate nextSpeed
+	{
+		nextSpeed = *currentSpeed + (accel * timeSlice);
+	}
+	
+	// Determine how many time slices it will take to decelerate
+	int numberOfDecelSlices = 0;		// The number of time slices needed to decelerate to 0
+	float speedTemp = nextSpeed;
+	
+	while (speedTemp > 0)
+	{
+		speedTemp = speedTemp - (decel * timeSlice);
+		numberOfDecelSlices++;
+	}
+
+	// If we are going to overshoot our target then begin to decelerate
+	if ((*distanceTraveled + (nextSpeed *(numberOfDecelSlices * timeSlice))) >= distance)
+	{
+		nextSpeed = *currentSpeed - (decel * timeSlice);
+	}
+	
+	*distanceTraveled = *distanceTraveled + nextSpeed * timeSlice;
+	*currentSpeed = nextSpeed;
+	
+	if (nextSpeed < 0)
+	{
+		nextSpeed = 0;
+	}
+
+	return nextSpeed;
 }
 
 //********************************************************
+// CONSTANT VELOCITY FUNCTION
 // Purpose: fill the nexSpeed buffer with values for constant velocity values
-// Return: Success or failure to fill the buffer
+// Returns: Completion status
+//					1 = incomplete
+//					0 = done
 //********************************************************
 int ConstantVelocity(float velocity, int dir, int motor)
 {

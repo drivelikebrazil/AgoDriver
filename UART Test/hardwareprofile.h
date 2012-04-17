@@ -42,8 +42,8 @@
 //PPS Inputs
 #define QEIA_A	6
 #define QEIA_B	5
-#define QEIB_A	9
-#define QEIB_B	8
+#define QEIB_A	10
+#define QEIB_B	11
 
 //PPS Input registers
 #define U1RXR_I RPINR18bits.U1RXR
