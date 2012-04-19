@@ -29,6 +29,8 @@ void setup(float diameterA, float diameterB, float spacing, int countsA, int cou
 int TrapezoidalMovement(float maxSpeed, float accel, float decel, float distance, int motors, int dir);	// Calculate the next appropriate value in the trapezoidal motion profile and try to place it in the buffer
 int ConstantVelocity(float velocity, int dir, int motor);	// Place the next CV value in the buffer
 int stickThisInTheBuffer(float bufferValue, int motors);	// Places a floating point value in nextSpeed for A,B or both
+int TurnOnAxis(float velocity, int dir, int degrees);
+void Stop(int coast, int motors);
 
 //Legacy Functions
 void PositionCalculation(void);						// !!Legacy!!
@@ -39,11 +41,6 @@ int pidCalcA = 0;			//Perform PID algorithm calculations in the interupt? (BOOL)
 int pidCalcB = 0;
 
 //Setup variables
-float wheelDiameterA;							//Wheel diameter for wheel attached to motor A
-float wheelDiameterB;							//Wheel diameter for wheel attached to motor B
-float wheelSpacing;								//Spacing between wheels
-int quadCountsA;								//Number of counts per revolution for motor A quadrature encoder
-int quadCountsB;								//Number of counts per revolution for motor B quadrature encoder
 float distancePerCountA;
 float distancePerCountB;
 
@@ -78,10 +75,30 @@ float currentSpeedB = 0;
 float distanceTraveledA= 0;			//Distance traveled for the current function
 float distanceTraveledB = 0;
 int ConstantVelocityCounter = 0;	// Used by constantVelocity to determine if the CV function has generated enough points
-float userProvidedTime = 0;			// How long the user wants the motor(s) to move
 float timeSlice = .1;//.0085;
 int neededDataPoints;				// The number of data points needed for a movement command, trucated
 int numberOfGeneratedPoints = 0;	// The number of data points that have been generated so far by a movement command
+
+//**************************************//
+// The variables below will be        //
+//      provided by various              //
+//      packets from the Arduino     //
+//**************************************//
+float userProvidedTime;						// How long the user wants the motor(s) to move
+float wheelDiameterA;						//Wheel diameter for wheel attached to motor A
+float wheelDiameterB;						//Wheel diameter for wheel attached to motor B
+float wheelSpacing;							//Spacing between wheels
+int quadCountsA;								//Number of counts per revolution for motor A quadrature encoder
+int quadCountsB;								//Number of counts per revolution for motor B quadrature encoder
+float velocity;										// The max speed provided by the user for various functions
+float accel;
+float decel;
+int direction;										// 0 = clockwise, 1 = counterclockwise
+int motors;										// 0 = A, 1 = B, 2 = A and B
+float distance;									// The distance the user wishes to travel
+int degrees;										// Degrees by which to rotate for turn on Axis and possibly turn on radius
+int coast;											// 0 = coast, 1 = brake
+//*****End of provided globals*******//
 
 //PID variable definitions
 fractional mAabcCoeffs[3] __attribute__ ((space(xmemory)));		//((section (".xbss, bss, xmemory")));
@@ -168,15 +185,18 @@ int main(void)
 	//motorAPid.measuredOutput = Q15(0.453);
 	//motorBPid.measuredOutput = Q15(0.453);
 
-	// Test Variables
-	float velocity = 2;	// Velocity of 2 m/s
-	float accel = 1;
-	float decel = 1;
-	int dir = 1;		// Moving forward
-	int motors = 0;		// Testing only motor A
-	float distance = 5;
+	// Test variables
+	velocity = 2.5;	// Velocity of 2 m/s
+	accel = 1;
+	decel = 1;
+	direction= 0;		// Spinning clockwise
+	motors = 0;		// Testing only motor A
+	distance = 5;
+	degrees = 15;
+	userProvidedTime = 0;
+	wheelSpacing = 8;
+	coast = 1;
 	//userProvidedTime = 5*timeSlice;
-	//neededDataPoints = userProvidedTime/timeSlice;
 
 //	while(1){
 		
@@ -184,12 +204,22 @@ int main(void)
 		//PID(&motorAPid);
 		//PID(&motorBPid);
 		
+/*
 		// Trapezoidal movement 
 		while (TrapezoidalMovement(velocity, accel, decel, distance, motors, dir) == 1)
 		{
 			nextSpeedAReadCounter++;
 			//nextSpeedBReadCounter++;
 		}
+*/
+		while (TurnOnAxis(velocity, direction, degrees) == 1)
+		{
+			nextSpeedAReadCounter++;
+			nextSpeedBReadCounter++;
+		}
+
+		Stop(coast, motors);
+		nextSpeedAReadCounter++;
 //	}	
 	return 0;
 }
@@ -739,6 +769,86 @@ float calcNextTrap(float maxSpeed, float* currentSpeed, float accel, float decel
 }
 
 //********************************************************
+// TURN ON AXIS FUNCTION
+// Purpose: fill the nexSpeed buffer with values for turn on axis
+// Returns: Completion status
+//					1 = incomplete
+//					0 = done
+// Notes: For this funciton, motor A is left and motor B is right
+//			  for dir, 0 = clockwise and 1 = counterclockwise
+//********************************************************
+int TurnOnAxis(float velocity, int dir, int degrees)
+{
+	float velocityA;
+	float velocityB;
+
+	// Disable pid calculations
+	pidCalcA = 1;
+	pidCalcB = 1;
+	
+	// Determine which direction to rotate
+	if (dir == 0)	// Clockwise
+	{
+		velocityA = velocity;
+		velocityB = -1 * velocity;
+	}
+	else			// Counterclockwise
+	{
+		velocityA = -1 * velocity;
+		velocityB = velocity;
+	}
+	
+	if ((userProvidedTime <= 0) && (degrees == 0))	// Spin for an infinite amount of time
+	{
+		stayCVA = 1;
+		stayCVB = 1;
+		
+		CVA = velocityA;
+		CVB = velocityB;
+
+		// Enable pid calculations
+		pidCalcA = 0;
+		pidCalcB = 0;
+		
+		return 0;	// Status = DONE;
+	}
+	else	
+	{
+		if((userProvidedTime > 0) && (degrees == 0)) // Spin for a defined ammount of time
+		{
+			neededDataPoints = userProvidedTime/timeSlice;
+		}
+		else	// Spin for a defined angle
+		{
+			float angleInRadians = degrees * (3.14/180);
+			float arcLength = angleInRadians * (wheelSpacing / 2);
+			neededDataPoints = (arcLength / velocity) / timeSlice;
+		}
+	
+	
+		if((stickThisInTheBuffer(velocityA,0) == 0) && (stickThisInTheBuffer(velocityB,1) == 0))	//  If the data was successfully put into the buffer A, move on the buffer B
+		{
+			numberOfGeneratedPoints++;
+			
+			if(numberOfGeneratedPoints < neededDataPoints)
+			{
+				return 1;	// Status = INCOMPLETE. Run again to generate another point
+			}
+			else
+			{
+				pidCalcA = 0;
+				pidCalcB = 0;
+				return 0;	// Status = DONE
+			}
+		}
+		else
+		{
+			return 1;	// Status = INCOMPLETE. Run again to generate another point
+		}
+	}
+}
+
+//********************************************************
 // CONSTANT VELOCITY FUNCTION
 // Purpose: fill the nexSpeed buffer with values for constant velocity values
 // Returns: Completion status
@@ -747,37 +857,25 @@ float calcNextTrap(float maxSpeed, float* currentSpeed, float accel, float decel
 //********************************************************
 int ConstantVelocity(float velocity, int dir, int motor)
 {
-	if (motor == 0)
+	if (motor != 1)
 	{
 		pidCalcA = 1;
 	}
-	else if (motor == 1)
+	if (motor != 0)
 	{
-		pidCalcB = 1;
-	}
-	else
-	{
-		pidCalcA = 1;
 		pidCalcB = 1;
 	}
 	
 	if (userProvidedTime <= 0)	// Constant velocity for an infinite amount of time
 	{
-		if (motor == 0)		// Motor A only
+		if (motor != 1)		// Motor A
 		{
 			stayCVA = 1;
 			CVA = dir * velocity;
 		}
-		else if (motor == 1)	// Motor B only
+		if (motor != 0)		// Motor B
 		{
 			stayCVB = 1;
-			CVB = dir * velocity;
-		}
-		else			// Both motors
-		{
-			stayCVA = 1;
-			stayCVB = 1;
-			CVA = dir * velocity;
 			CVB = dir * velocity;
 		}
 
@@ -790,6 +888,7 @@ int ConstantVelocity(float velocity, int dir, int motor)
 		if(stickThisInTheBuffer((velocity*dir),motor) == 0)	//  If the data was successfully put into the buffer, increment the counter
 		{
 			numberOfGeneratedPoints++;
+			neededDataPoints = userProvidedTime / timeSlice;
 			
 			if(numberOfGeneratedPoints < neededDataPoints)
 			{
@@ -868,6 +967,58 @@ int stickThisInTheBuffer(float bufferValue, int motors)	// don't forget the func
 		else
 		{
 			return 1;	// Failure to place both values in the buffer
+		}
+	}
+}
+
+//********************************************************
+// STOP FUNCTION
+// Purpose: Stop the motor(s)
+//********************************************************
+void Stop(int coast, int motors)
+{
+	if (coast == 0)	// Coasting
+	{
+		if (motors != 1)
+		{
+			pidCalcA = 0;
+		}
+		if (motors != 0)
+		{
+			pidCalcB = 0;
+		}
+	}
+	else	// braking
+	{
+		int counter = 0;
+		
+		if (motors != 1)	// Motor A
+		{
+			nextSpeedAReadCounter = -1;
+			nextSpeedAWriteCounter = 0;
+			
+			while (counter < NEXT_SPEED_BUFFER_SIZE)
+			{
+				if (stickThisInTheBuffer(0, 0) == 0)
+				{
+					counter++;
+				}
+			}
+			
+			counter = 0;
+		}
+		if (motors != 0)	// Motor B
+		{
+			nextSpeedBReadCounter = -1;
+			nextSpeedBWriteCounter = 0;
+			
+			while (counter < NEXT_SPEED_BUFFER_SIZE)
+			{
+				if (stickThisInTheBuffer(0, 1) == 0)
+				{
+					counter++;
+				}
+			}
 		}
 	}
 }
