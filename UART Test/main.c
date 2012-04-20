@@ -21,16 +21,17 @@ void UART1Println(char string[]);					//Custom print line function (because the 
 //Motor Control Functions
 void InitQEI1(void);								//Initialize the Quadrature Encoder Interface for motor A
 void InitTMR1(void);								//Initialize the timer for the PID calculation interrupt
+void InitTMR2(void);
 void InitPid();										//Initialize PID
 void setMotorACoeffs(float kP, float kI, float kD);	//Set PID Gains for motor A
 void setMotorBCoeffs(float kP, float kI, float kD);	//Set PID Gains for motor B
 float calcNextTrap(float maxSpeed, float * currentSpeed, float accel, float decel, float distance, float * distanceTraveled);	// Calculates next speed values for a trapezoidal movement profile
 void setup(float diameterA, float diameterB, float spacing, int countsA, int countsB);
 int TrapezoidalMovement(float maxSpeed, float accel, float decel, float distance, int motors, int dir);	// Calculate the next appropriate value in the trapezoidal motion profile and try to place it in the buffer
-int ConstantVelocity(float velocity, int dir, int motor);	// Place the next CV value in the buffer
+int ConstantVelocity(float velocity, float userProvidedTime, int dir, int motor);	// Place the next CV value in the buffer
 int stickThisInTheBuffer(float bufferValue, int motors);	// Places a floating point value in nextSpeed for A,B or both
-int TurnOnAxis(float velocity, int dir, int degrees);
-int TurnOnAxisA(float velocity, int dir, int degrees, float accel, float decel);
+int TurnOnAxis(float velocity, float userProvidedTime, int dir, int degrees);
+int TurnOnAxisTrap(float velocity, int dir, int degrees, float accel, float decel);
 int Stop(int coast, int motors);
 
 //Legacy Functions
@@ -121,7 +122,7 @@ volatile int switchTest = 0;
 //      provided by various              //
 //      packets from the Arduino     //
 //**************************************//
-float userProvidedTime;						// How long the user wants the motor(s) to move
+//float userProvidedTime;						// How long the user wants the motor(s) to move
 float wheelDiameterA;						//Wheel diameter for wheel attached to motor A
 float wheelDiameterB;						//Wheel diameter for wheel attached to motor B
 float wheelSpacing;							//Spacing between wheels
@@ -152,7 +153,12 @@ int main(void)
 	CLKDIVbits.PLLPOST=0;		// PLLPOST (N1) 0=/2
 	 	
 	while(!OSCCONbits.LOCK);	//wait for PLL to stabilize
-
+	
+	unsigned long delay = 4000000;
+	while(delay != 0)
+	{
+		delay--;
+	}
 
 	//Set up UART
 	InitUART1();
@@ -164,7 +170,9 @@ int main(void)
 	InitPid();
 
 	//Set up timer 1 (Interrupts for velocity calculations)
-	//InitTMR1();
+	InitTMR1();
+
+	InitTMR2();
 
 	// Setup status flags as inputs
 	MTR_A_SF_TRIS = 1;
@@ -225,7 +233,7 @@ int main(void)
 	int motors = 0;		// Testing only motor A
 	distance = 5;
 	int degrees = 360;
-	userProvidedTime = 0;
+	//userProvidedTime = 0;
 	//wheelSpacing = 8;
 	coast = 0;
 	//userProvidedTime = 5*timeSlice;
@@ -233,74 +241,162 @@ int main(void)
 	//setup(0.12, 0.12, 0.255, 200, 200);
 
 	//stayCVA = 1;
-	//CVA = 5;
+	//CVA = 0;
 	//pidCalcA = 1;
 	//stayCVB = 1;
-	//CVB = 2.5;
+	//CVB = 0;
 	//pidCalcB = 1;
-	int test = 1;
+	//int test = 1;
+	
+	//while(ConstantVelocity(2.5,5,1,2) == 1){}
+	//while(TrapezoidalMovement(2.5,1,1,5,2,1) == 1){}
+	//while(1){}
 
-	UART1AddByte('c');
+	//UART1AddByte('c');
 
 	while(1)
 	{
-		if(readyToGo == 0)
+		if(packetPosition >= PACKET_SIZE)
 		{
-			if(packetPosition >= PACKET_SIZE)
+			currentOpCode = packet[3] & INSTRUCTION_MASK;
+
+			if(currentOpCode == OPCODE_SETUP)
 			{
-				currentOpCode = packet[3] & INSTRUCTION_MASK;
+				float whlSpacing;
+				float diamA;
+				float diamB;
+				int	qCA;
+				int qCB;
 
-				if(currentOpCode == OPCODE_SETUP)
+				floatInterpret fli;
+				fli.ul = ((unsigned long)packet[4] << 24) | ((unsigned long)packet[5] << 16) | ((unsigned long)packet[6] << 8) | (unsigned long)packet[7];
+				whlSpacing = fli.f;
+
+				fli.ul = ((unsigned long)packet[8] << 24) | ((unsigned long)packet[9] << 16) | ((unsigned long)packet[10] << 8) | (unsigned long)packet[11];
+				diamA = fli.f;
+
+				fli.ul = ((unsigned long)packet[12] << 24) | ((unsigned long)packet[13] << 16) | ((unsigned long)packet[14] << 8) | (unsigned long)packet[15];
+				diamB = fli.f;
+
+				intInterpret ii;
+				ii.ui = ((unsigned int)packet[16] << 8) | (unsigned int)packet[17];
+				qCA = ii.i;
+				
+				ii.ui = ((unsigned int)packet[18] << 8) | (unsigned int)packet[19];
+				qCB = ii.i;
+
+				setup(diamA, diamB, whlSpacing, qCA, qCB);
+
+				packetPosition = 0;
+				UART1AddByte('c');
+			}
+			else if((currentOpCode == OPCODE_TRAP) && (readyToGo == 1))
+			{
+				int motor = packet[3] & MOTOR_MASK;
+				motor = motor >> 1;
+				
+				int dir = packet[3] & LAST_MASK;
+				if(dir == 0)
 				{
-					float whlSpacing;
-					float diamA;
-					float diamB;
-					int	qCA;
-					int qCB;
-
-					floatInterpret fli;
-					fli.ul = ((unsigned long)packet[4] << 24) | ((unsigned long)packet[5] << 16) | ((unsigned long)packet[6] << 8) | (unsigned long)packet[7];
-					whlSpacing = fli.f;
-	
-					fli.ul = ((unsigned long)packet[8] << 24) | ((unsigned long)packet[9] << 16) | ((unsigned long)packet[10] << 8) | (unsigned long)packet[11];
-					diamA = fli.f;
-
-					fli.ul = ((unsigned long)packet[12] << 24) | ((unsigned long)packet[13] << 16) | ((unsigned long)packet[14] << 8) | (unsigned long)packet[15];
-					diamB = fli.f;
-
-					intInterpret ii;
-					ii.ui = ((unsigned int)packet[16] << 8) | (unsigned int)packet[17];
-					qCA = ii.i;
-					
-					ii.ui = ((unsigned int)packet[18] << 8) | (unsigned int)packet[19];
-					qCB = ii.i;
-
-					setup(diamA, diamB, whlSpacing, qCA, qCB);
-
-					packetPosition = 0;
+					dir = -1;
 				}
-			}			
+				
+				floatInterpret fli;
+				fli.ul = ((unsigned long)packet[4] << 24) | ((unsigned long)packet[5] << 16) | ((unsigned long)packet[6] << 8) | (unsigned long)packet[7];
+				float maxSpd = fli.f;
 
-		}
+				fli.ul = ((unsigned long)packet[8] << 24) | ((unsigned long)packet[9] << 16) | ((unsigned long)packet[10] << 8) | (unsigned long)packet[11];
+				float dist = fli.f;
+
+				fli.ul = ((unsigned long)packet[12] << 24) | ((unsigned long)packet[13] << 16) | ((unsigned long)packet[14] << 8) | (unsigned long)packet[15];
+				float accl = fli.f;
+
+				fli.ul = ((unsigned long)packet[16] << 24) | ((unsigned long)packet[17] << 16) | ((unsigned long)packet[18] << 8) | (unsigned long)packet[19];
+				float decl = fli.f;
+
+				if(TrapezoidalMovement(maxSpd, accl, decl, dist, motor, dir) == 0)
+				{
+					packetPosition = 0;
+					UART1AddByte('c');
+				}				
+				
+			}
+			else if((currentOpCode == OPCODE_CV) && (readyToGo == 1))
+			{
+				int motor = packet[3] & MOTOR_MASK;
+				motor = motor >> 1;
+				
+				int dir = packet[3] & LAST_MASK;
+				if(dir == 0)
+				{
+					dir = -1;
+				}
+
+				floatInterpret fli;
+				fli.ul = ((unsigned long)packet[4] << 24) | ((unsigned long)packet[5] << 16) | ((unsigned long)packet[6] << 8) | (unsigned long)packet[7];
+				float vel = fli.f;
+
+				fli.ul = ((unsigned long)packet[8] << 24) | ((unsigned long)packet[9] << 16) | ((unsigned long)packet[10] << 8) | (unsigned long)packet[11];
+				float time = fli.f;
+
+				if(ConstantVelocity(vel,time,dir,motor) == 0)
+				{
+					packetPosition = 0;
+					UART1AddByte('c');
+				}
+			}
+			else if((currentOpCode == OPCODE_TOA) && (readyToGo == 1))
+			{
+				int dir = packet[3] & LAST_MASK;
+
+				floatInterpret fli;
+				fli.ul = ((unsigned long)packet[4] << 24) | ((unsigned long)packet[5] << 16) | ((unsigned long)packet[6] << 8) | (unsigned long)packet[7];
+				float vel = fli.f;
+
+				fli.ul = ((unsigned long)packet[8] << 24) | ((unsigned long)packet[9] << 16) | ((unsigned long)packet[10] << 8) | (unsigned long)packet[11];
+				float time = fli.f;
+
+				intInterpret ii;
+				ii.ui = ((unsigned int)packet[14] << 8) | (unsigned int)packet[15];
+				int degs = ii.i;
+
+				if(degs > 0)
+				{
+					if(TurnOnAxisTrap(vel, dir, degs, 1, 1) == 0)
+					{
+						packetPosition = 0;
+						UART1AddByte('c');
+					}
+				}
+				else
+				{
+					if(TurnOnAxis(vel, time, dir, degs) == 0)
+					{
+						packetPosition = 0;
+						UART1AddByte('c');
+					}
+				}
+			}
+			else if((currentOpCode == OPCODE_STOP) && (readyToGo == 1))
+			{
+				
+			}
+		}			
 	}
 
 /*
-	while(test == 1){
 	
-		test = TrapezoidalMovement(5, 1, 1, 30, 2, 1);
-		
-	}
 
 	while(1){}
 */
-		while (TurnOnAxis(velocity, direction, degrees * 2) == 1)
-		{
+		//while (TurnOnAxis(velocity, direction, degrees * 2) == 1)
+		//{
 			//nextSpeedAReadCounter++;
 			//nextSpeedBReadCounter++;
-		}
+		//}
 
 		
-		Stop(coast, motors);
+		//Stop(coast, motors);
 		//nextSpeedAReadCounter++;
 		
 	return 0;
@@ -320,6 +416,12 @@ void InitPid()
 
 	PIDCoeffCalc(&kCoeffsA[0], &motorAPid);
 	PIDCoeffCalc(&kCoeffsB[0], &motorBPid);
+}
+
+void __attribute__ ((__interrupt__))_T2Interrupt(void)
+{
+	UART1AddByte('c');
+	IFS0bits.T2IF = 0; 			// Clear timer 1 interrupt flag
 }
 
 //Speed Caclulation ISR
@@ -394,11 +496,11 @@ void __attribute__((__interrupt__)) _T1Interrupt(void)
 		else
 		{
 			int lookAhead = nextSpeedAReadCounter + 1;
-			if(lookAhead == NEXT_SPEED_BUFFER_SIZE)
+			if(lookAhead >= NEXT_SPEED_BUFFER_SIZE)
 			{
 				lookAhead = 0;
 			}
-			
+
 			if(lookAhead != nextSpeedAWriteCounter)
 			{
 				nextSpeedAReadCounter = lookAhead;
@@ -437,7 +539,7 @@ void __attribute__((__interrupt__)) _T1Interrupt(void)
 		else
 		{
 			int lookAhead = nextSpeedBReadCounter + 1;
-			if(lookAhead == NEXT_SPEED_BUFFER_SIZE)
+			if(lookAhead >= NEXT_SPEED_BUFFER_SIZE)
 			{
 				lookAhead = 0;
 			}
@@ -543,6 +645,9 @@ void __attribute__((__interrupt__)) _U1RXInterrupt(void)
 		packet[packetPosition] = chunk[3];
 		packetPosition++;
 
+		IEC0bits.T2IE = 0; 			// Enable timer 1 interrupts
+		T2CONbits.TON = 0; 			// Turn on timer 1
+
 		UART1AddByte('c');
 	}
 	else
@@ -580,7 +685,7 @@ unsigned char UART1DataReady(void)
 //Get byte from RX buffer
 unsigned char UART1Data(void)
 {
-	//while(U1STAbits.URXDA == 0);
+	while(U1STAbits.URXDA == 0);
 	return U1RXREG;
 }
 
@@ -696,6 +801,22 @@ void InitTMR1(void)
 	return;
 }
 
+//Initialize the timer for the PID calculation interrupt
+void InitTMR2(void)
+{
+	TMR2 = 0; 					// Reset timer counter
+	T2CONbits.TON = 0; 			// Turn off timer 1
+	T2CONbits.TSIDL = 0; 		// Continue operation during sleep
+	T2CONbits.TGATE = 0; 		// Gated timer accumulation disabled
+	T2CONbits.TCS = 0; 			// use Tcy as source clock
+	T2CONbits.TCKPS = 3; 		// Tcy / 64 as input clock
+	PR2 = 51579; 				// Interrupt period = 0.0085 sec with a 64 prescaler
+	IFS0bits.T2IF = 0; 			// Clear timer 1 interrupt flag
+	IEC0bits.T2IE = 1; 			// Enable timer 1 interrupts
+	T2CONbits.TON = 1; 			// Turn on timer 1
+	return;
+}
+
 //Setup function
 void setup(float diameterA, float diameterB, float spacing, int countsA, int countsB)
 {
@@ -779,6 +900,10 @@ int TrapezoidalMovement(float maxSpeed, float accel, float decel, float distance
 				distanceMetA = 1;	// We have not met our goal
 			}
 		}
+		else
+		{
+			distanceMetA = 0;
+		}
 	}
 	
 	if (motors != 0)	// Motor B is active
@@ -825,6 +950,11 @@ int TrapezoidalMovement(float maxSpeed, float accel, float decel, float distance
 				distanceMetB = 1; // We have not met our goal
 			}
 		}
+		else
+		{
+			distanceMetB = 0;	// We have met our goal
+		}
+	
 	}
 
 	// Determine if the trapezoidal movement function is done
@@ -835,6 +965,8 @@ int TrapezoidalMovement(float maxSpeed, float accel, float decel, float distance
 			if (nextSpeedAReadCounter == (nextSpeedAWriteCounter-1))
 			{
 				pidCalcA = 0;
+				distanceTraveledA = 0;
+				currentSpeedA = 0;
 				return 0;	// Status = DONE
 			}
 			else
@@ -853,7 +985,9 @@ int TrapezoidalMovement(float maxSpeed, float accel, float decel, float distance
 		{
 			if(nextSpeedBReadCounter == (nextSpeedBWriteCounter-1))
 			{
-				pidCalcB = 0;			
+				pidCalcB = 0;	
+				distanceTraveledB = 0;
+				currentSpeedB = 0;		
 				return 0;	// Status = DONE
 			}
 			else
@@ -873,7 +1007,11 @@ int TrapezoidalMovement(float maxSpeed, float accel, float decel, float distance
 			if((nextSpeedBReadCounter == (nextSpeedBWriteCounter-1)) && (nextSpeedAReadCounter == (nextSpeedAWriteCounter-1)))
 			{
 				pidCalcA = 0;
-				pidCalcB = 0;			
+				pidCalcB = 0;	
+				distanceTraveledA = 0;
+				currentSpeedA = 0;
+				distanceTraveledB = 0;
+				currentSpeedB = 0;		
 				return 0;	// Status = DONE
 			}
 			else
@@ -943,7 +1081,7 @@ float calcNextTrap(float maxSpeed, float* currentSpeed, float accel, float decel
 // Notes: For this funciton, motor A is left and motor B is right
 //			  for dir, 0 = clockwise and 1 = counterclockwise
 //********************************************************
-int TurnOnAxis(float velocity, int dir, int degrees)
+int TurnOnAxis(float velocity, float userProvidedTime, int dir, int degrees)
 {
 	float velocityA;
 	float velocityB;
@@ -1011,7 +1149,8 @@ int TurnOnAxis(float velocity, int dir, int degrees)
 					if((nextSpeedBReadCounter == (nextSpeedBWriteCounter-1)) && (nextSpeedAReadCounter == (nextSpeedAWriteCounter-1)))
 					{
 						pidCalcA = 0;
-						pidCalcB = 0;			
+						pidCalcB = 0;
+						numberOfGeneratedPoints = 0;			
 						return 0;	// Status = DONE
 					}
 					else
@@ -1030,7 +1169,8 @@ int TurnOnAxis(float velocity, int dir, int degrees)
 			if((nextSpeedBReadCounter == (nextSpeedBWriteCounter-1)) && (nextSpeedAReadCounter == (nextSpeedAWriteCounter-1)))
 			{
 				pidCalcA = 0;
-				pidCalcB = 0;			
+				pidCalcB = 0;
+				numberOfGeneratedPoints = 0;			
 				return 0;	// Status = DONE
 			}
 			else
@@ -1041,7 +1181,7 @@ int TurnOnAxis(float velocity, int dir, int degrees)
 	}
 }
 
-int TurnOnAxisA(float velocity, int dir, int degrees, float accel, float decel)
+int TurnOnAxisTrap(float velocity, int dir, int degrees, float accel, float decel)
 {
 	float angleInRadians = degrees * (3.14/180);
 	float arcLength = angleInRadians * (wheelSpacing / 2);
@@ -1085,7 +1225,7 @@ int TurnOnAxisA(float velocity, int dir, int degrees, float accel, float decel)
 //					1 = incomplete
 //					0 = done
 //********************************************************
-int ConstantVelocity(float velocity, int dir, int motor)
+int ConstantVelocity(float velocity, float userProvidedTime, int dir, int motor)
 {
 	if (motor != 1)
 	{
@@ -1109,8 +1249,8 @@ int ConstantVelocity(float velocity, int dir, int motor)
 			CVB = dir * velocity;
 		}
 
-		pidCalcA = 0;
-		pidCalcB = 0;
+		//pidCalcA = 0;
+		//pidCalcB = 0;
 		return 0;	// Status = DONE;
 	}
 	else	// Constant velocity for a defined ammount of time
@@ -1134,6 +1274,7 @@ int ConstantVelocity(float velocity, int dir, int motor)
 						if (nextSpeedAReadCounter == (nextSpeedAWriteCounter-1))
 						{
 							pidCalcA = 0;
+							numberOfGeneratedPoints = 0;
 							return 0;	// Status = DONE
 						}
 						else
@@ -1145,7 +1286,8 @@ int ConstantVelocity(float velocity, int dir, int motor)
 					{
 						if(nextSpeedBReadCounter == (nextSpeedBWriteCounter-1))
 						{
-							pidCalcB = 0;			
+							pidCalcB = 0;	
+							numberOfGeneratedPoints = 0;		
 							return 0;	// Status = DONE
 						}
 						else
@@ -1158,7 +1300,8 @@ int ConstantVelocity(float velocity, int dir, int motor)
 						if((nextSpeedBReadCounter == (nextSpeedBWriteCounter-1)) && (nextSpeedAReadCounter == (nextSpeedAWriteCounter-1)))
 						{
 							pidCalcA = 0;
-							pidCalcB = 0;			
+							pidCalcB = 0;
+							numberOfGeneratedPoints = 0;			
 							return 0;	// Status = DONE
 						}
 						else
@@ -1180,6 +1323,7 @@ int ConstantVelocity(float velocity, int dir, int motor)
 				if (nextSpeedAReadCounter == (nextSpeedAWriteCounter-1))
 				{
 					pidCalcA = 0;
+					numberOfGeneratedPoints = 0;
 					return 0;	// Status = DONE
 				}
 				else
@@ -1191,7 +1335,8 @@ int ConstantVelocity(float velocity, int dir, int motor)
 			{
 				if(nextSpeedBReadCounter == (nextSpeedBWriteCounter-1))
 				{
-					pidCalcB = 0;			
+					pidCalcB = 0;	
+					numberOfGeneratedPoints = 0;		
 					return 0;	// Status = DONE
 				}
 				else
@@ -1204,7 +1349,8 @@ int ConstantVelocity(float velocity, int dir, int motor)
 				if((nextSpeedBReadCounter == (nextSpeedBWriteCounter-1)) && (nextSpeedAReadCounter == (nextSpeedAWriteCounter-1)))
 				{
 					pidCalcA = 0;
-					pidCalcB = 0;			
+					pidCalcB = 0;
+					numberOfGeneratedPoints = 0;			
 					return 0;	// Status = DONE
 				}
 				else
@@ -1269,6 +1415,16 @@ int stickThisInTheBuffer(float bufferValue, int motors)	// don't forget the func
 			nextSpeedB[nextSpeedBWriteCounter] = bufferValue;
 			nextSpeedAWriteCounter++;
 			nextSpeedBWriteCounter++;
+
+			if (nextSpeedBWriteCounter >= NEXT_SPEED_BUFFER_SIZE)	// Have we exceeded our biffer size?
+			{
+				nextSpeedBWriteCounter = 0;		// restart the buffer count
+			}
+
+			if (nextSpeedAWriteCounter >= NEXT_SPEED_BUFFER_SIZE)	// Have we exceeded our biffer size?
+			{
+				nextSpeedAWriteCounter = 0;		// restart the buffer count
+			}
 			
 			return 0;	// Successfully placed both values in the buffer
 		}
