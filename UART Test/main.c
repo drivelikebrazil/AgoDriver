@@ -165,7 +165,7 @@ int main(void)
 	InitPid();
 
 	//Set up timer 1 (Interrupts for velocity calculations)
-	//InitTMR1();
+	InitTMR1();
 
 	// Setup status flags as inputs
 	MTR_A_SF_TRIS = 1;
@@ -225,13 +225,13 @@ int main(void)
 	direction= 0;		// Spinning clockwise
 	int motors = 0;		// Testing only motor A
 	distance = 5;
-	int degrees = 15;
+	int degrees = 0;
 	userProvidedTime = 0;
-	wheelSpacing = 8;
+	//wheelSpacing = 8;
 	coast = 0;
 	//userProvidedTime = 5*timeSlice;
 
-	setup(0.12, 0.12, 1, 200, 200);
+	setup(0.12, 0.12, 0.255, 200, 200);
 
 	//stayCVA = 1;
 	//CVA = 5;
@@ -240,6 +240,15 @@ int main(void)
 	//CVB = 2.5;
 	//pidCalcB = 1;
 	int test = 1;
+
+	
+	while(test == 1){
+	
+		test = TrapezoidalMovement(5, 1, 1, 5 * 4.83871, 2, 1);
+		
+	}
+
+	while(1){}
 
 	while(1)
 	{
