@@ -30,7 +30,7 @@ int TrapezoidalMovement(float maxSpeed, float accel, float decel, float distance
 int ConstantVelocity(float velocity, int dir, int motor);	// Place the next CV value in the buffer
 int stickThisInTheBuffer(float bufferValue, int motors);	// Places a floating point value in nextSpeed for A,B or both
 int TurnOnAxis(float velocity, int dir, int degrees);
-void Stop(int coast, int motors);
+int Stop(int coast, int motors);
 
 //Legacy Functions
 void PositionCalculation(void);						// !!Legacy!!
@@ -60,7 +60,6 @@ float nextSpeedB[NEXT_SPEED_BUFFER_SIZE];		//MTRA Ring buffer for storing speeds
 volatile int nextSpeedBWriteCounter = 0;		//Indicates the next index to be written to in the nextSpeedB buffer
 volatile int nextSpeedBReadCounter = -1;		//Indicates the next index to be read from in the nextSpeedB buffer
 
-volatile int velocity;							//velocity measurement
 int PosA[2] = {0,0};							//last and present position
 int PosB[2] = {0,0};
 
@@ -75,30 +74,29 @@ float currentSpeedB = 0;
 float distanceTraveledA= 0;			//Distance traveled for the current function
 float distanceTraveledB = 0;
 int ConstantVelocityCounter = 0;	// Used by constantVelocity to determine if the CV function has generated enough points
-float timeSlice = .1;//.0085;
+float timeSlice = .0085;
 int neededDataPoints;				// The number of data points needed for a movement command, trucated
 int numberOfGeneratedPoints = 0;	// The number of data points that have been generated so far by a movement command
 
-//**************************************//
-// The variables below will be        //
-//      provided by various              //
-//      packets from the Arduino     //
-//**************************************//
+//*******************************************//
+//     USER PROVIDED GLOBALS     //
+//******************************************//
+//       The variables below will be        //
+//            provided by various              //
+//         packets from the Arduino       //
+//******************************************//
 float userProvidedTime;						// How long the user wants the motor(s) to move
 float wheelDiameterA;						//Wheel diameter for wheel attached to motor A
 float wheelDiameterB;						//Wheel diameter for wheel attached to motor B
 float wheelSpacing;							//Spacing between wheels
 int quadCountsA;								//Number of counts per revolution for motor A quadrature encoder
 int quadCountsB;								//Number of counts per revolution for motor B quadrature encoder
-float velocity;										// The max speed provided by the user for various functions
 float accel;
 float decel;
 int direction;										// 0 = clockwise, 1 = counterclockwise
-int motors;										// 0 = A, 1 = B, 2 = A and B
 float distance;									// The distance the user wishes to travel
-int degrees;										// Degrees by which to rotate for turn on Axis and possibly turn on radius
 int coast;											// 0 = coast, 1 = brake
-//*****End of provided globals*******//
+//*****End of user-provided globals*******//
 
 //PID variable definitions
 fractional mAabcCoeffs[3] __attribute__ ((space(xmemory)));		//((section (".xbss, bss, xmemory")));
@@ -186,13 +184,13 @@ int main(void)
 	//motorBPid.measuredOutput = Q15(0.453);
 
 	// Test variables
-	velocity = 2.5;	// Velocity of 2 m/s
+	float velocity = 2.5;	// Velocity of 2 m/s
 	accel = 1;
 	decel = 1;
 	direction= 0;		// Spinning clockwise
-	motors = 0;		// Testing only motor A
+	int motors = 0;		// Testing only motor A
 	distance = 5;
-	degrees = 15;
+	int degrees = 15;
 	userProvidedTime = 0;
 	wheelSpacing = 8;
 	coast = 1;
@@ -405,6 +403,7 @@ void __attribute__((__interrupt__)) _T1Interrupt(void)
 //UART RX ISR
 void __attribute__((__interrupt__)) _U1RXInterrupt(void)
 {
+	/*
 	//This is test code for initial testing of the recieve
 	//It WILL need to be changed to accomodate
 	char c;
@@ -435,6 +434,7 @@ void __attribute__((__interrupt__)) _U1RXInterrupt(void)
 	}
 
 	IFS0bits.U1RXIF = 0;	//clear the recieve flag
+	*/
 }
 
 //Set PID Gains for motor A
@@ -605,90 +605,117 @@ void setup(float diameterA, float diameterB, float spacing, int countsA, int cou
 //**************************************************************
 int TrapezoidalMovement(float maxSpeed, float accel, float decel, float distance, int motors, int dir)
 {
-	float nextSpeedA = 0;
-	float nextSpeedB = 0;
+	float nSA = 0;
+	float nSB = 0;
 	int distanceMetA = -1;
 	int distanceMetB = -1;
 	
 	if (motors != 1)	// Motor A is active
 	{
 		pidCalcA = 1;
-		nextSpeedA = calcNextTrap(maxSpeed, &currentSpeedA, accel, decel, distance, &distanceTraveledA);	// The next speed that the PID algorithm should aim for
+		float currentSpeedATemp = currentSpeedA;
+		float distanceTraveledATemp = distanceTraveledA;
 		
-		// Place nextSpeed into the buffer, and if it happened successfully then update currentSpeed
-		if (stickThisInTheBuffer((nextSpeedA * dir), 0) == 0)
-		{			
-			if (nextSpeedA == 0)
-			{
-				distanceTraveledA = distance;
-			}
-			else
-			{
-				// Calculate the ammount of positive distance we have traveled regaurdless of dirrection
-				distanceTraveledA = distanceTraveledA + nextSpeedA*timeSlice;
-			}
-			
-			currentSpeedA = nextSpeedA;
-			
-			// If we have met our distance requirement for this motor then indicate so
-			if(distanceTraveledA < distance)
-			{
-				distanceMetA  = 1;	// We have not met our goal
-			}
-			else
-			{
-				distanceMetA = 0;	// We have met our goal
-			}
-		}
-		else
+		if(distanceTraveledA < distance)
 		{
-			distanceMetA = 1;	// We have not met our goal
+			nSA = calcNextTrap(maxSpeed, &currentSpeedATemp, accel, decel, distance, &distanceTraveledATemp);	// The next speed that the PID algorithm should aim for
+			
+			// Place nextSpeed into the buffer, and if it happened successfully then update currentSpeed
+			if (stickThisInTheBuffer((nSA * dir), 0) == 0)
+			{			
+				// If the value is successfully placed into the buffer, update the REAL current speed and distance traveled
+				currentSpeedA = currentSpeedATemp;
+				distanceTraveledA = distanceTraveledATemp;
+				
+				if (nSA == 0)
+				{
+					distanceTraveledA = distance;
+				}
+				else
+				{
+					// Calculate the ammount of positive distance we have traveled regaurdless of dirrection
+					distanceTraveledA = distanceTraveledA + nSA*timeSlice;
+				}
+				
+				currentSpeedA = nSA;
+				
+				// If we have met our distance requirement for this motor then indicate so
+				if(distanceTraveledA < distance)
+				{
+					distanceMetA  = 1;	// We have not met our goal
+				}
+				else
+				{
+					distanceMetA = 0;	// We have met our goal
+				}
+			}
+			else
+			{
+				distanceMetA = 1;	// We have not met our goal
+			}
 		}
 	}
 	
 	if (motors != 0)	// Motor B is active
 	{
 		pidCalcB = 1;
-		nextSpeedB = calcNextTrap(maxSpeed, &currentSpeedB, accel, decel, distance, &distanceTraveledB);	// The next speed that the PID algorithm should aim for
+		float currentSpeedBTemp = currentSpeedB;
+		float distanceTraveledBTemp = distanceTraveledB;
 		
-		// Place nextSpeed into the buffer, and if it happened successfully then update currentSpeed
-		if (stickThisInTheBuffer((nextSpeedB * dir), 1) == 0)
+		if(distanceTraveledB < distance)
 		{
-			if (nextSpeedB == 0)
+			nSB = calcNextTrap(maxSpeed, &currentSpeedBTemp, accel, decel, distance, &distanceTraveledBTemp);	// The next speed that the PID algorithm should aim for
+			
+			// Place nextSpeed into the buffer, and if it happened successfully then update currentSpeed
+			if (stickThisInTheBuffer((nSB * dir), 1) == 0)
 			{
-				distanceTraveledB = distance;
+				// If the value is successfully placed into the buffer, update the REAL current speed and distance traveled
+				currentSpeedB = currentSpeedBTemp;
+				distanceTraveledB = distanceTraveledBTemp;
+			
+				if (nSB == 0)
+				{
+					distanceTraveledB = distance;
+				}
+				else
+				{
+					// Calculate the ammount of positive distance we have traveled regaurdless of dirrection
+					distanceTraveledB= distanceTraveledB + nSB*timeSlice;
+				}
+				
+				currentSpeedB = nSB;
+				
+				// If we have met our distance requirement for this motor then indicate so
+				if(distanceTraveledB < distance)
+				{
+					distanceMetB = 1;	// We have not met our goal
+				}
+				else
+				{
+					distanceMetB = 0;	// We have met our goal
+				}
 			}
 			else
 			{
-				// Calculate the ammount of positive distance we have traveled regaurdless of dirrection
-				distanceTraveledB= distanceTraveledB + nextSpeedB*timeSlice;
+				distanceMetB = 1; // We have not met our goal
 			}
-			
-			currentSpeedB = nextSpeedB;
-			
-			// If we have met our distance requirement for this motor then indicate so
-			if(distanceTraveledB < distance)
-			{
-				distanceMetB = 1;	// We have not met our goal
-			}
-			else
-			{
-				distanceMetB = 0;	// We have met our goal
-			}
-		}
-		else
-		{
-			distanceMetB = 1; // We have not met our goal
 		}
 	}
 
-	// Determine if the rapezoidal movement function is done
+	// Determine if the trapezoidal movement function is done
 	if (motors == 0)	// motor A only
 	{
 		if (distanceMetA == 0)
 		{
-			pidCalcA = 0;
-			return 0;	// Status = DONE
+			if (nextSpeedAReadCounter == (nextSpeedAWriteCounter-1))
+			{
+				pidCalcA = 0;
+				return 0;	// Status = DONE
+			}
+			else
+			{
+				return 1;	// Status = INCOMPLETE. We are waiting on the read counter to catch up
+			}
 		}
 		else
 		{
@@ -699,8 +726,15 @@ int TrapezoidalMovement(float maxSpeed, float accel, float decel, float distance
 	{
 		if (distanceMetB == 0)
 		{
-			pidCalcB = 0;
-			return 0;	// Status = DONE
+			if(nextSpeedBReadCounter == (nextSpeedBWriteCounter-1))
+			{
+				pidCalcB = 0;			
+				return 0;	// Status = DONE
+			}
+			else
+			{
+				return 1;	// Status = INCOMPLETE. We are waiting on the read counter to catch up
+			}			
 		}
 		else
 		{
@@ -711,9 +745,16 @@ int TrapezoidalMovement(float maxSpeed, float accel, float decel, float distance
 	{
 		if ((distanceMetA == 0) && (distanceMetB == 0))
 		{
-			pidCalcA = 0;
-			pidCalcB = 0;
-			return 0;	// Status = DONE
+			if((nextSpeedBReadCounter == (nextSpeedBWriteCounter-1)) && (nextSpeedAReadCounter == (nextSpeedAWriteCounter-1)))
+			{
+				pidCalcA = 0;
+				pidCalcB = 0;			
+				return 0;	// Status = DONE
+			}
+			else
+			{
+				return 1;	// Status = INCOMPLETE. We are waiting on the read counter to catch up
+			}			
 		}
 		else
 		{
@@ -806,7 +847,7 @@ int TurnOnAxis(float velocity, int dir, int degrees)
 		CVA = velocityA;
 		CVB = velocityB;
 
-		// Enable pid calculations
+		// Disable pid calculations
 		pidCalcA = 0;
 		pidCalcB = 0;
 		
@@ -825,25 +866,47 @@ int TurnOnAxis(float velocity, int dir, int degrees)
 			neededDataPoints = (arcLength / velocity) / timeSlice;
 		}
 	
-	
-		if((stickThisInTheBuffer(velocityA,0) == 0) && (stickThisInTheBuffer(velocityB,1) == 0))	//  If the data was successfully put into the buffer A, move on the buffer B
+		if(numberOfGeneratedPoints < neededDataPoints)
 		{
-			numberOfGeneratedPoints++;
-			
-			if(numberOfGeneratedPoints < neededDataPoints)
+			if((stickThisInTheBuffer(velocityA,0) == 0) && (stickThisInTheBuffer(velocityB,1) == 0))	//  If the data was successfully put into the buffer A, move on the buffer B
 			{
-				return 1;	// Status = INCOMPLETE. Run again to generate another point
+				numberOfGeneratedPoints++;
+				
+				if(numberOfGeneratedPoints < neededDataPoints)
+				{
+					return 1;	// Status = INCOMPLETE. Run again to generate another point
+				}
+				else
+				{
+					if((nextSpeedBReadCounter == (nextSpeedBWriteCounter-1)) && (nextSpeedAReadCounter == (nextSpeedAWriteCounter-1)))
+					{
+						pidCalcA = 0;
+						pidCalcB = 0;			
+						return 0;	// Status = DONE
+					}
+					else
+					{
+						return 1;	// Status = INCOMPLETE. We are waiting on the read counter to catch up
+					}			
+				}
 			}
 			else
 			{
-				pidCalcA = 0;
-				pidCalcB = 0;
-				return 0;	// Status = DONE
+				return 1;	// Status = INCOMPLETE. Run again to generate another point
 			}
 		}
 		else
 		{
-			return 1;	// Status = INCOMPLETE. Run again to generate another point
+			if((nextSpeedBReadCounter == (nextSpeedBWriteCounter-1)) && (nextSpeedAReadCounter == (nextSpeedAWriteCounter-1)))
+			{
+				pidCalcA = 0;
+				pidCalcB = 0;			
+				return 0;	// Status = DONE
+			}
+			else
+			{
+				return 1;	// Status = INCOMPLETE. We are waiting on the read counter to catch up
+			}			
 		}
 	}
 }
@@ -885,25 +948,103 @@ int ConstantVelocity(float velocity, int dir, int motor)
 	}
 	else	// Constant velocity for a defined ammount of time
 	{
-		if(stickThisInTheBuffer((velocity*dir),motor) == 0)	//  If the data was successfully put into the buffer, increment the counter
+		neededDataPoints = userProvidedTime / timeSlice;
+	
+		if(numberOfGeneratedPoints < neededDataPoints)
 		{
-			numberOfGeneratedPoints++;
-			neededDataPoints = userProvidedTime / timeSlice;
-			
-			if(numberOfGeneratedPoints < neededDataPoints)
+			if(stickThisInTheBuffer((velocity*dir),motor) == 0)	//  If the data was successfully put into the buffer, increment the counter
 			{
-				return 1;	// Status = INCOMPLETE. Run again to generate another point
+				numberOfGeneratedPoints++;
+				
+				if(numberOfGeneratedPoints < neededDataPoints)
+				{
+					return 1;	// Status = INCOMPLETE. Run again to generate another point
+				}
+				else	// We have generated enough points...but has the reader caught up to our extreme whit, cunning and speed?
+				{
+					if (motor == 0)	// motor A only
+					{
+						if (nextSpeedAReadCounter == (nextSpeedAWriteCounter-1))
+						{
+							pidCalcA = 0;
+							return 0;	// Status = DONE
+						}
+						else
+						{
+							return 1;	// Status = INCOMPLETE. We are waiting on the read counter to catch up
+						}
+					}
+					else if (motor == 1)	// Motor B only
+					{
+						if(nextSpeedBReadCounter == (nextSpeedBWriteCounter-1))
+						{
+							pidCalcB = 0;			
+							return 0;	// Status = DONE
+						}
+						else
+						{
+							return 1;	// Status = INCOMPLETE. We are waiting on the read counter to catch up
+						}			
+					}
+					else	// Motors A and B
+					{
+						if((nextSpeedBReadCounter == (nextSpeedBWriteCounter-1)) && (nextSpeedAReadCounter == (nextSpeedAWriteCounter-1)))
+						{
+							pidCalcA = 0;
+							pidCalcB = 0;			
+							return 0;	// Status = DONE
+						}
+						else
+						{
+							return 1;	// Status = INCOMPLETE. We are waiting on the read counter to catch up
+						}			
+					}	
+				}
 			}
 			else
 			{
-				pidCalcA = 0;
-				pidCalcB = 0;
-				return 0;	// Status = DONE
+				return 1;	// Status = INCOMPLETE. Run again to generate another point
 			}
 		}
 		else
 		{
-			return 1;	// Status = INCOMPLETE. Run again to generate another point
+			if (motor == 0)	// motor A only
+			{
+				if (nextSpeedAReadCounter == (nextSpeedAWriteCounter-1))
+				{
+					pidCalcA = 0;
+					return 0;	// Status = DONE
+				}
+				else
+				{
+					return 1;	// Status = INCOMPLETE. We are waiting on the read counter to catch up
+				}
+			}
+			else if (motor == 1)	// Motor B only
+			{
+				if(nextSpeedBReadCounter == (nextSpeedBWriteCounter-1))
+				{
+					pidCalcB = 0;			
+					return 0;	// Status = DONE
+				}
+				else
+				{
+					return 1;	// Status = INCOMPLETE. We are waiting on the read counter to catch up
+				}			
+			}
+			else	// Motors A and B
+			{
+				if((nextSpeedBReadCounter == (nextSpeedBWriteCounter-1)) && (nextSpeedAReadCounter == (nextSpeedAWriteCounter-1)))
+				{
+					pidCalcA = 0;
+					pidCalcB = 0;			
+					return 0;	// Status = DONE
+				}
+				else
+				{
+					return 1;	// Status = INCOMPLETE. We are waiting on the read counter to catch up
+				}			
+			}	
 		}
 	}
 }
@@ -975,7 +1116,7 @@ int stickThisInTheBuffer(float bufferValue, int motors)	// don't forget the func
 // STOP FUNCTION
 // Purpose: Stop the motor(s)
 //********************************************************
-void Stop(int coast, int motors)
+int Stop(int coast, int motors)
 {
 	if (coast == 0)	// Coasting
 	{
@@ -987,6 +1128,8 @@ void Stop(int coast, int motors)
 		{
 			pidCalcB = 0;
 		}
+		
+		return 0;	// Status = DONE
 	}
 	else	// braking
 	{
@@ -994,30 +1137,24 @@ void Stop(int coast, int motors)
 		
 		if (motors != 1)	// Motor A
 		{
-			nextSpeedAReadCounter = -1;
-			nextSpeedAWriteCounter = 0;
-			
-			while (counter < NEXT_SPEED_BUFFER_SIZE)
+			if (stickThisInTheBuffer(0, 0) == 0)
 			{
-				if (stickThisInTheBuffer(0, 0) == 0)
-				{
-					counter++;
-				}
+				return 0;	// Status = DONE;
 			}
-			
-			counter = 0;
+			else
+			{
+				return 1;	// Status = INCOMPLETE
+			}
 		}
 		if (motors != 0)	// Motor B
 		{
-			nextSpeedBReadCounter = -1;
-			nextSpeedBWriteCounter = 0;
-			
-			while (counter < NEXT_SPEED_BUFFER_SIZE)
+			if (stickThisInTheBuffer(0, 1) == 0)
 			{
-				if (stickThisInTheBuffer(0, 1) == 0)
-				{
-					counter++;
-				}
+				return 0;	// Status = DONE
+			}
+			else
+			{
+				return 1;	// Status = INCOMPLETE
 			}
 		}
 	}
