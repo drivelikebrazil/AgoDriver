@@ -61,11 +61,10 @@ float nextSpeedA[NEXT_SPEED_BUFFER_SIZE];		//MTRA Ring buffer for storing speeds
 volatile int nextSpeedAWriteCounter = 0;		//Indicates the next index to be written to in the nextSpeedA buffer
 volatile int nextSpeedAReadCounter = -1;			//Indicates the next index to be read from in the nextSpeedA buffer
 
-float nextSpeedB[NEXT_SPEED_BUFFER_SIZE];		//MTRA Ring buffer for storing speeds that the PID algorithm consumes as the control reference
+float nextSpeedB[NEXT_SPEED_BUFFER_SIZE];		//MTRB Ring buffer for storing speeds that the PID algorithm consumes as the control reference
 volatile int nextSpeedBWriteCounter = 0;		//Indicates the next index to be written to in the nextSpeedB buffer
 volatile int nextSpeedBReadCounter = -1;		//Indicates the next index to be read from in the nextSpeedB buffer
 
-volatile int velocity;							//velocity measurement
 int PosA[2] = {0,0};							//last and present position
 int PosB[2] = {0,0};
 
@@ -84,12 +83,40 @@ float timeSlice = .0085;
 int neededDataPoints;				// The number of data points needed for a movement command, trucated
 int numberOfGeneratedPoints = 0;	// The number of data points that have been generated so far by a movement command
 
-volatile unsigned char c[4];
+//Communication/Command Variables
+#define PACKET_SIZE 20
+volatile unsigned char chunk[4];
+volatile unsigned char packet[PACKET_SIZE];
+volatile int packetPosition = 0;
+int readyToGo = 0;
+
+typedef union 
+{
+	float f;
+	unsigned long ul;
+} floatInterpret;
+
+typedef union
+{
+	int i;
+	unsigned int ui;
+} intInterpret;
+
+unsigned char INSTRUCTION_MASK = 240;
+unsigned char MOTOR_MASK = 6;
+unsigned char LAST_MASK = 1;
+unsigned char FIRST_MASK = 8;
+
+unsigned char OPCODE_SETUP = 0;
+unsigned char OPCODE_CV = 16;
+unsigned char OPCODE_TRAP = 32;
+unsigned char OPCODE_TOA = 48;
+unsigned char OPCODE_STOP = 80;
+
+unsigned char currentOpCode;
+
 volatile int testNum = 0;
 volatile int switchTest = 0;
-
-int neededDataPoints;				// The number of data points needed for a movement command, trucated
-int numberOfGeneratedPoints = 0;	// The number of data points that have been generated so far by a movement command
 
 //**************************************//
 // The variables below will be        //
@@ -144,7 +171,7 @@ int main(void)
 	InitPid();
 
 	//Set up timer 1 (Interrupts for velocity calculations)
-	InitTMR1();
+	//InitTMR1();
 
 	// Setup status flags as inputs
 	MTR_A_SF_TRIS = 1;
@@ -204,10 +231,10 @@ int main(void)
 	direction= 0;		// Spinning clockwise
 	motors = 0;		// Testing only motor A
 	distance = 5;
-	degrees = 15;
+	degrees = 0;
 	userProvidedTime = 0;
 	wheelSpacing = 8;
-	coast = 1;
+	coast = 0;
 	//userProvidedTime = 5*timeSlice;
 
 	setup(0.12, 0.12, 1, 200, 200);
@@ -219,6 +246,51 @@ int main(void)
 	//CVB = 2.5;
 	//pidCalcB = 1;
 	int test = 1;
+
+	while(1)
+	{
+		UART1AddByte('c');
+		if(readyToGo == 1)
+		{
+			if(packetPosition >= PACKET_SIZE)
+			{
+				currentOpCode = packet[0] & INSTRUCTION_MASK;
+
+				if(currentOpCode == OPCODE_SETUP)
+				{
+					float whlSpacing;
+					float diamA;
+					float diamB;
+					int	qCA;
+					int qCB;
+
+					floatInterpret fli;
+					fli.ul = ((unsigned long)packet[7] << 24) | ((unsigned long)packet[6] << 16) | ((unsigned long)packet[5] << 8) | (unsigned long)packet[4];
+					whlSpacing = fli.f;
+	
+					fli.ul = ((unsigned long)packet[11] << 24) | ((unsigned long)packet[10] << 16) | ((unsigned long)packet[9] << 8) | (unsigned long)packet[8];
+					diamA = fli.f;
+
+					fli.ul = ((unsigned long)packet[15] << 24) | ((unsigned long)packet[14] << 16) | ((unsigned long)packet[13] << 8) | (unsigned long)packet[12];
+					diamB = fli.f;
+
+					intInterpret ii;
+					ii.ui = ((unsigned int)packet[17] << 8) | (unsigned int)packet[16];
+					qCA = ii.i;
+					
+					ii.ui = ((unsigned int)packet[19] << 8) | (unsigned int)packet[18];
+					qCB = ii.i;
+
+					setup(diamA, diamB, whlSpacing, qCA, qCB);
+
+					packetPosition = 0;
+				}
+			}			
+
+		}
+	}
+
+/*
 	while(test == 1){
 	
 		test = TrapezoidalMovement(5, 1, 1, 30, 2, 1);
@@ -226,6 +298,7 @@ int main(void)
 	}
 
 	while(1){}
+*/
 /*
 		// Trapezoidal movement 
 		while (TrapezoidalMovement(velocity, accel, decel, distance, motors, dir) == 1)
@@ -234,14 +307,15 @@ int main(void)
 			//nextSpeedBReadCounter++;
 		}
 */
-		while (TurnOnAxis(velocity, direction, degrees) == 1)
+		while (TurnOnAxis(velocity, direction, degrees * 2) == 1)
 		{
-			nextSpeedAReadCounter++;
-			nextSpeedBReadCounter++;
+			//nextSpeedAReadCounter++;
+			//nextSpeedBReadCounter++;
 		}
 
+		
 		Stop(coast, motors);
-		nextSpeedAReadCounter++;
+		//nextSpeedAReadCounter++;
 		
 	return 0;
 }
@@ -429,8 +503,8 @@ void __attribute__((__interrupt__)) _T1Interrupt(void)
 	}
 	else
 	{
-		//MTR_A_HIGH_CHANNEL = 0;
-		//MTR_A_LO_CHANNEL = 0;
+		MTR_A_HIGH_CHANNEL = 0;
+		MTR_A_LO_CHANNEL = 0;
 	}
 	
 	if(pidCalcB == 1)
@@ -450,8 +524,8 @@ void __attribute__((__interrupt__)) _T1Interrupt(void)
 	}
 	else
 	{
-		//MTR_B_HIGH_CHANNEL = 0;
-		//MTR_B_LO_CHANNEL = 0;
+		MTR_B_HIGH_CHANNEL = 0;
+		MTR_B_LO_CHANNEL = 0;
 	}
 		
 	IFS0bits.T1IF = 0; 			// Clear timer 1 interrupt flag	
@@ -462,47 +536,33 @@ void __attribute__((__interrupt__)) _U1RXInterrupt(void)
 {
 	//This is test code for initial testing of the recieve
 	//It WILL need to be changed to accomodate
-	union {
-		float f;
-		unsigned long ul;
-	} floatInterpret;
 
-	c[3] = UART1Data();
-	c[2] = UART1Data();
-	c[1] = UART1Data();
-	c[0] = UART1Data();
+	chunk[3] = UART1Data();
+	chunk[2] = UART1Data();
+	chunk[1] = UART1Data();
+	chunk[0] = UART1Data();
 
-	floatInterpret.ul = ((unsigned long)c[0] << 24) | ((unsigned long)c[1] << 16) | ((unsigned long)c[2] << 8) | (unsigned long)c[3];
+	//floatInterpret.ul = ((unsigned long)c[0] << 24) | ((unsigned long)c[1] << 16) | ((unsigned long)c[2] << 8) | (unsigned long)c[3];
 
-	float test = floatInterpret.f;
+	//float test = floatInterpret.f;
 
-	testNum++;
-	/*
-	char veloString[20];
-	itoa(veloString,velocity,10);
-	
-	if(c == '0'){
-		MTR_A_DUTY_CYCLE = 0;
-		UART1Println("0%");
-		//printf("%d%c%",0,'%');
-		UART1Println(veloString);
+	if(packetPosition < PACKET_SIZE)
+	{
+		packet[packetPosition] = chunk[0];
+		packetPosition++;
+		packet[packetPosition] = chunk[1];
+		packetPosition++;
+		packet[packetPosition] = chunk[2];
+		packetPosition++;
+		packet[packetPosition] = chunk[3];
+		packetPosition++;
+
+		UART1AddByte('c');
 	}
-	else if(c == '1'){
-		MTR_A_DUTY_CYCLE = 204;
-		UART1Println("25%");
-		//printf("%d%c%",25,'%');
+	else
+	{
+		UART1AddByte('r');
 	}
-	else if(c == '2'){
-		MTR_A_DUTY_CYCLE = 408;
-		UART1Println("50%");
-		//printf("%d%c%",50,'%');
-	}
-	else if(c == '3'){
-		MTR_A_DUTY_CYCLE = 612;
-		UART1Println("75%");
-		//printf("%d%c%",75,'%');
-	}
-	*/
 
 	IFS0bits.U1RXIF = 0;	//clear the recieve flag
 }
@@ -669,6 +729,8 @@ void setup(float diameterA, float diameterB, float spacing, int countsA, int cou
 	
 	distancePerCountA = (pi * diameterA)/quadCountsA;
 	distancePerCountB = (pi * diameterB)/quadCountsB; 
+
+	readyToGo = 1;
 }
 
 //**************************************************Movement Functions************************************************************//
@@ -883,8 +945,8 @@ int TurnOnAxis(float velocity, int dir, int degrees)
 		CVB = velocityB;
 
 		// Enable pid calculations
-		pidCalcA = 0;
-		pidCalcB = 0;
+		pidCalcA = 1;
+		pidCalcB = 1;
 		
 		return 0;	// Status = DONE;
 	}
@@ -898,22 +960,27 @@ int TurnOnAxis(float velocity, int dir, int degrees)
 		{
 			float angleInRadians = degrees * (3.14/180);
 			float arcLength = angleInRadians * (wheelSpacing / 2);
-			neededDataPoints = (arcLength / velocity) / timeSlice;
+			neededDataPoints = (arcLength / velocity) / timeSlice + 1;
 		}
 	
-	
+		if(numberOfGeneratedPoints == (neededDataPoints - 1))
+		{
+			velocityA = 0;
+			velocityB = 0;
+		}
+
 		if((stickThisInTheBuffer(velocityA,0) == 0) && (stickThisInTheBuffer(velocityB,1) == 0))	//  If the data was successfully put into the buffer A, move on the buffer B
 		{
 			numberOfGeneratedPoints++;
-			
+
 			if(numberOfGeneratedPoints < neededDataPoints)
 			{
 				return 1;	// Status = INCOMPLETE. Run again to generate another point
 			}
 			else
-			{
-				pidCalcA = 0;
-				pidCalcB = 0;
+			{ 
+				pidCalcA = 1;
+				pidCalcB = 1;
 				return 0;	// Status = DONE
 			}
 		}
@@ -1058,10 +1125,12 @@ void Stop(int coast, int motors)
 		if (motors != 1)
 		{
 			pidCalcA = 0;
+			MTR_A_DUTY_CYCLE = 0;
 		}
 		if (motors != 0)
 		{
 			pidCalcB = 0;
+			MTR_B_DUTY_CYCLE = 0;
 		}
 	}
 	else	// braking
