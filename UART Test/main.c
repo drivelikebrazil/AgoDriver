@@ -14,7 +14,7 @@ _FICD(ICS_PGD1 & JTAGEN_OFF)						//Set to programming interface 1 and no JTAG
 //UART Functions
 unsigned char UART1DataReady(void);					//Check for available data in RX buffer
 unsigned char UART1Data(void);						//Get byte from RX buffer
-void UART1AddByte(char c);							//Add byte to TX buffer, pause if it's full
+void UART1AddByte(unsigned char c);							//Add byte to TX buffer, pause if it's full
 void InitUART1(void);								//Initialize UART
 void UART1Println(char string[]);					//Custom print line function (because the built in one sucks...)
 
@@ -30,6 +30,7 @@ int TrapezoidalMovement(float maxSpeed, float accel, float decel, float distance
 int ConstantVelocity(float velocity, int dir, int motor);	// Place the next CV value in the buffer
 int stickThisInTheBuffer(float bufferValue, int motors);	// Places a floating point value in nextSpeed for A,B or both
 int TurnOnAxis(float velocity, int dir, int degrees);
+int TurnOnAxisA(float velocity, int dir, int degrees, float accel, float decel);
 int Stop(int coast, int motors);
 
 //Legacy Functions
@@ -126,8 +127,6 @@ float wheelDiameterB;						//Wheel diameter for wheel attached to motor B
 float wheelSpacing;							//Spacing between wheels
 int quadCountsA;								//Number of counts per revolution for motor A quadrature encoder
 int quadCountsB;								//Number of counts per revolution for motor B quadrature encoder
-float accel;
-float decel;
 int direction;										// 0 = clockwise, 1 = counterclockwise
 float distance;									// The distance the user wishes to travel
 int coast;											// 0 = coast, 1 = brake
@@ -165,7 +164,7 @@ int main(void)
 	InitPid();
 
 	//Set up timer 1 (Interrupts for velocity calculations)
-	InitTMR1();
+	//InitTMR1();
 
 	// Setup status flags as inputs
 	MTR_A_SF_TRIS = 1;
@@ -220,18 +219,18 @@ int main(void)
 
 	// Test variables
 	float velocity = 2.5;	// Velocity of 2 m/s
-	accel = 1;
-	decel = 1;
+	float accel = 1;
+	float decel = 1;
 	direction= 0;		// Spinning clockwise
 	int motors = 0;		// Testing only motor A
 	distance = 5;
-	int degrees = 0;
+	int degrees = 360;
 	userProvidedTime = 0;
 	//wheelSpacing = 8;
 	coast = 0;
 	//userProvidedTime = 5*timeSlice;
 
-	setup(0.12, 0.12, 0.255, 200, 200);
+	//setup(0.12, 0.12, 0.255, 200, 200);
 
 	//stayCVA = 1;
 	//CVA = 5;
@@ -241,23 +240,15 @@ int main(void)
 	//pidCalcB = 1;
 	int test = 1;
 
-	
-	while(test == 1){
-	
-		test = TrapezoidalMovement(5, 1, 1, 5 * 4.83871, 2, 1);
-		
-	}
-
-	while(1){}
+	UART1AddByte('c');
 
 	while(1)
 	{
-		UART1AddByte('c');
-		if(readyToGo == 1)
+		if(readyToGo == 0)
 		{
 			if(packetPosition >= PACKET_SIZE)
 			{
-				currentOpCode = packet[0] & INSTRUCTION_MASK;
+				currentOpCode = packet[3] & INSTRUCTION_MASK;
 
 				if(currentOpCode == OPCODE_SETUP)
 				{
@@ -268,20 +259,20 @@ int main(void)
 					int qCB;
 
 					floatInterpret fli;
-					fli.ul = ((unsigned long)packet[7] << 24) | ((unsigned long)packet[6] << 16) | ((unsigned long)packet[5] << 8) | (unsigned long)packet[4];
+					fli.ul = ((unsigned long)packet[4] << 24) | ((unsigned long)packet[5] << 16) | ((unsigned long)packet[6] << 8) | (unsigned long)packet[7];
 					whlSpacing = fli.f;
 	
-					fli.ul = ((unsigned long)packet[11] << 24) | ((unsigned long)packet[10] << 16) | ((unsigned long)packet[9] << 8) | (unsigned long)packet[8];
+					fli.ul = ((unsigned long)packet[8] << 24) | ((unsigned long)packet[9] << 16) | ((unsigned long)packet[10] << 8) | (unsigned long)packet[11];
 					diamA = fli.f;
 
-					fli.ul = ((unsigned long)packet[15] << 24) | ((unsigned long)packet[14] << 16) | ((unsigned long)packet[13] << 8) | (unsigned long)packet[12];
+					fli.ul = ((unsigned long)packet[12] << 24) | ((unsigned long)packet[13] << 16) | ((unsigned long)packet[14] << 8) | (unsigned long)packet[15];
 					diamB = fli.f;
 
 					intInterpret ii;
-					ii.ui = ((unsigned int)packet[17] << 8) | (unsigned int)packet[16];
+					ii.ui = ((unsigned int)packet[16] << 8) | (unsigned int)packet[17];
 					qCA = ii.i;
 					
-					ii.ui = ((unsigned int)packet[19] << 8) | (unsigned int)packet[18];
+					ii.ui = ((unsigned int)packet[18] << 8) | (unsigned int)packet[19];
 					qCB = ii.i;
 
 					setup(diamA, diamB, whlSpacing, qCA, qCB);
@@ -589,12 +580,12 @@ unsigned char UART1DataReady(void)
 //Get byte from RX buffer
 unsigned char UART1Data(void)
 {
-	while(U1STAbits.URXDA == 0);
+	//while(U1STAbits.URXDA == 0);
 	return U1RXREG;
 }
 
 //Add byte to TX buffer, pause if it's full
-void UART1AddByte(char c)
+void UART1AddByte(unsigned char c)
 {
 	//int i;
 
@@ -742,6 +733,7 @@ int TrapezoidalMovement(float maxSpeed, float accel, float decel, float distance
 	float nSB = 0;
 	int distanceMetA = -1;
 	int distanceMetB = -1;
+	distance = distance * 4.83871; 	//Dumb scale factor that awesomely makes everything alright
 	
 	if (motors != 1)	// Motor A is active
 	{
@@ -1049,14 +1041,16 @@ int TurnOnAxis(float velocity, int dir, int degrees)
 	}
 }
 
-int TurnOnAxis(float velocity, int dir, int degrees, float accel, float decel)
+int TurnOnAxisA(float velocity, int dir, int degrees, float accel, float decel)
 {
 	float angleInRadians = degrees * (3.14/180);
 	float arcLength = angleInRadians * (wheelSpacing / 2);
 	
 	if (dir == 0)	// clockwise
 	{
-		if((TrapezoidalMovement(velocity ,accel ,decel ,arcLength ,0 ,1) == 0) && (TrapezoidalMovement(velocity ,accel ,decel ,arcLength ,1 ,0) == 0))
+		int aResult = TrapezoidalMovement(velocity ,accel ,decel ,arcLength ,0 ,1);
+		int bResult = TrapezoidalMovement(velocity ,accel ,decel ,arcLength ,1 ,-1);
+		if((aResult == 0) && (bResult == 0))
 		{
 			pidCalcA = 0;
 			pidCalcB = 0;
@@ -1069,7 +1063,9 @@ int TurnOnAxis(float velocity, int dir, int degrees, float accel, float decel)
 	}
 	else	// counterclockwise
 	{
-		if((TrapezoidalMovement(velocity ,accel ,decel ,arcLength ,0 ,0) == 0) && (TrapezoidalMovement(velocity ,accel ,decel ,arcLength ,1 ,1) == 0))
+		int aResult = TrapezoidalMovement(velocity ,accel ,decel ,arcLength ,0 ,-1);
+		int bResult = TrapezoidalMovement(velocity ,accel ,decel ,arcLength ,1 ,1);
+		if((aResult == 0) && (bResult == 0))
 		{
 			pidCalcA = 0;
 			pidCalcB = 0;
