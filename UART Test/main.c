@@ -979,17 +979,22 @@ int TurnOnAxis(float velocity, int dir, int degrees)
 	}
 	else	
 	{
+		/*
 		if((userProvidedTime > 0) && (degrees == 0)) // Spin for a defined ammount of time
 		{
+		*/
 			neededDataPoints = userProvidedTime/timeSlice;
+		/*
 		}
 		else	// Spin for a defined angle
 		{
+		
 			float angleInRadians = degrees * (3.14/180);
 			float arcLength = angleInRadians * (wheelSpacing / 2);
 			neededDataPoints = (arcLength / velocity) / timeSlice;
 		}
-	
+		*/
+		
 		if(numberOfGeneratedPoints < neededDataPoints)
 		{
 			if((stickThisInTheBuffer(velocityA,0) == 0) && (stickThisInTheBuffer(velocityB,1) == 0))	//  If the data was successfully put into the buffer A, move on the buffer B
@@ -1031,6 +1036,39 @@ int TurnOnAxis(float velocity, int dir, int degrees)
 			{
 				return 1;	// Status = INCOMPLETE. We are waiting on the read counter to catch up
 			}			
+		}
+	}
+}
+
+int TurnOnAxis(float velocity, int dir, int degrees, float accel, float decel)
+{
+	float angleInRadians = degrees * (3.14/180);
+	float arcLength = angleInRadians * (wheelSpacing / 2);
+	
+	if (dir == 0)	// clockwise
+	{
+		if((TrapezoidalMovement(velocity ,accel ,decel ,arcLength ,0 ,1) == 0) && (TrapezoidalMovement(velocity ,accel ,decel ,arcLength ,1 ,0) == 0))
+		{
+			pidCalcA = 0;
+			pidCalcB = 0;
+			return 0;	// Status = DONE
+		}
+		else
+		{
+			return 1;	// Status = INCOMPLETE
+		}
+	}
+	else	// counterclockwise
+	{
+		if((TrapezoidalMovement(velocity ,accel ,decel ,arcLength ,0 ,0) == 0) && (TrapezoidalMovement(velocity ,accel ,decel ,arcLength ,1 ,1) == 0))
+		{
+			pidCalcA = 0;
+			pidCalcB = 0;
+			return 0;	// Status = DONE
+		}
+		else
+		{
+			return 1;	// Status = INCOMPLETE
 		}
 	}
 }
