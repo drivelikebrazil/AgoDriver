@@ -6,7 +6,7 @@
 #define NEXT_SPEED_BUFFER_SIZE		25
 
 //Set up processor registers
-_FOSCSEL(FNOSC_FRC)									//Use built in oscillator
+_FOSCSEL(FNOSC_FRCPLL)									//Use built in oscillator
 _FOSC(POSCMD_NONE & OSCIOFNC_ON)					//Use Oscillator pins as I/O pins is on
 _FWDT(FWDTEN_OFF)									//Turn watchdog timer off
 _FICD(ICS_PGD1 & JTAGEN_OFF)						//Set to programming interface 1 and no JTAG
@@ -44,8 +44,8 @@ float wheelDiameterB;							//Wheel diameter for wheel attached to motor B
 float wheelSpacing;								//Spacing between wheels
 int quadCountsA;								//Number of counts per revolution for motor A quadrature encoder
 int quadCountsB;								//Number of counts per revolution for motor B quadrature encoder
-float distancePerCountA;
-float distancePerCountB;
+float distancePerCountA = 0.12;
+float distancePerCountB = 0.12;
 
 //PID Variables
 tPID motorAPid;									//PID data structure for Motor A
@@ -79,17 +79,21 @@ float distanceTraveledA= 0;			//Distance traveled for the current function
 float distanceTraveledB = 0;
 int ConstantVelocityCounter = 0;	// Used by constantVelocity to determine if the CV function has generated enough points
 float userProvidedTime = 0;			// How long the user wants the motor(s) to move
-float timeSlice = .1;//.0085;
+float timeSlice = .0085;
 int neededDataPoints;				// The number of data points needed for a movement command, trucated
 int numberOfGeneratedPoints = 0;	// The number of data points that have been generated so far by a movement command
+
+volatile unsigned char c[4];
+volatile int testNum = 0;
+volatile int switchTest = 0;
 
 //PID variable definitions
 fractional mAabcCoeffs[3] __attribute__ ((space(xmemory)));		//((section (".xbss, bss, xmemory")));
 fractional mBabcCoeffs[3] __attribute__ ((space(xmemory)));		//((section (".xbss, bss, xmemory")));
 fractional mAcontHist[3] __attribute__ 	((space(ymemory)));		//((section (".ybss, bss, ymemory")));
 fractional mBcontHist[3] __attribute__ 	((space(ymemory)));		//((section (".ybss, bss, ymemory")));
-fractional kCoeffsA[] = {0.7,0.2,0};
-fractional kCoeffsB[] = {0.7,0.2,0};
+fractional kCoeffsA[3];// = {0.2,0,0};
+fractional kCoeffsB[3];// = {0.2,0,0};
 
 int main(void)
 {
@@ -97,25 +101,27 @@ int main(void)
 
 	//setup internal clock for 80MHz/40MIPS
 	//7.37/2=3.685*43=158.455/2=79.2275
-/*
+
 	CLKDIVbits.PLLPRE=0; 		// PLLPRE (N2) 0=/2 
 	PLLFBD=41; 			//pll multiplier (M) = +2
 	CLKDIVbits.PLLPOST=0;		// PLLPOST (N1) 0=/2
 	 	
 	while(!OSCCONbits.LOCK);	//wait for PLL to stabilize
-*/
+
 
 	//Set up UART
-	//InitUART1();
+	InitUART1();
 	
 	//Set up Quadrature Encoder Interface A
-	//InitQEI1();
+	InitQEI1();
 
 	//Set up PID
 	InitPid();
 
+	TRISAbits.TRISA2 = 0;
+
 	//Set up timer 1 (Interrupts for velocity calculations)
-	//InitTMR1();
+	InitTMR1();
 
 	// Setup status flags as inputs
 	MTR_A_SF_TRIS = 1;
@@ -152,14 +158,14 @@ int main(void)
 	PWM_CONFbits.PEN2L = 0; 	// PWM Low pin disabled 
 	PWM_CONFbits.PEN1L = 0; 	// PWM Low pin disabled
 
-	MTR_A_DUTY_CYCLE = TIMEBASE_PERIOD;		//Set duty cycle to 50%
-	MTR_B_DUTY_CYCLE = TIMEBASE_PERIOD;
+	MTR_A_DUTY_CYCLE = 0; //TIMEBASE_PERIOD;		//Set duty cycle to 50%
+	MTR_B_DUTY_CYCLE = 0; //TIMEBASE_PERIOD;
 	
 	PWM_TMR_ENABLE = 1;			//Enable the PWM Timerbase
 	
 	//Set up PID gains
-	setMotorACoeffs(0.7, 0.2, 0.02);
-	setMotorBCoeffs(0.7, 0.2, 0.02);
+	setMotorACoeffs(0.5, 0.49, 0.01);
+	setMotorBCoeffs(0.5, 0.49, 0.01);
 	
 	//Set the control reference and measured output
 	//(This is just for testing purposes)
@@ -178,19 +184,22 @@ int main(void)
 	//userProvidedTime = 5*timeSlice;
 	//neededDataPoints = userProvidedTime/timeSlice;
 
-//	while(1){
+	setup(0.12, 0.12, 1, 200, 200);
+
+	//stayCVA = 1;
+	//CVA = 5;
+	//pidCalcA = 1;
+	//stayCVB = 1;
+	//CVB = 2.5;
+	//pidCalcB = 1;
+	int test = 1;
+	while(test == 1){
+	
+		test = TrapezoidalMovement(5, 1, 1, 30, 2, 1);
 		
-		//Perform PID functions (For testing)
-		//PID(&motorAPid);
-		//PID(&motorBPid);
-		
-		// Trapezoidal movement 
-		while (TrapezoidalMovement(velocity, accel, decel, distance, motors, dir) == 1)
-		{
-			nextSpeedAReadCounter++;
-			//nextSpeedBReadCounter++;
-		}
-//	}	
+	}
+
+	while(1){}
 	return 0;
 }
 
@@ -217,6 +226,16 @@ void __attribute__((__interrupt__)) _T1Interrupt(void)
 	int outputB;
 	int dirA;
 	int dirB;
+
+	if(switchTest == 0)
+	{
+		PORTAbits.RA2 = 0;
+		switchTest++;
+	}
+	else{
+		PORTAbits.RA2 = 1;
+		switchTest--;
+	}
 	
 	//First copy the position count to get a snapshot
 	int POS1CNTcopy = (int)POS1CNT;
@@ -238,13 +257,46 @@ void __attribute__((__interrupt__)) _T1Interrupt(void)
 	//Calculate velocity
 	//The decimal value 0.0085 needs to be changed based on
 	//the interrupt interval
-	measuredSpeedA = (((float) PosA[0] - (float) PosA[1])/timeSlice) * distancePerCountA;
-	measuredSpeedB = (((float) PosB[0] - (float) PosB[1])/timeSlice) * distancePerCountB;
+	if(QEI1CONbits.UPDN == 1){
+		if(PosA[0] >= PosA[1]){
+			measuredSpeedA = ((float)(PosA[0] - PosA[1])/timeSlice) * distancePerCountA;
+		}
+		else{
+			measuredSpeedA = ((float)(PosA[0] - PosA[1] + quadCountsA)/timeSlice) * distancePerCountA;
+		}
+	}
+	else
+	{
+		if(PosA[0] <= PosA[1]){
+			measuredSpeedA = ((float)(PosA[0] - PosA[1])/timeSlice) * distancePerCountA;
+		}
+		else{
+			measuredSpeedA = ((float)(PosA[0] - PosA[1] - quadCountsA)/timeSlice) * distancePerCountA;
+		}
+	}
+
+	if(QEI2CONbits.UPDN == 1){
+		if(PosB[0] >= PosB[1]){
+			measuredSpeedB = ((float)(PosB[0] - PosB[1])/timeSlice) * distancePerCountB;
+		}
+		else{
+			measuredSpeedB = ((float)(PosB[0] - PosB[1] + quadCountsB)/timeSlice) * distancePerCountB;
+		}
+	}
+	else
+	{
+		if(PosB[0] <= PosB[1]){
+			measuredSpeedB = ((float)(PosB[0] - PosB[1])/timeSlice) * distancePerCountB;
+		}
+		else{
+			measuredSpeedB = ((float)(PosB[0] - PosB[1] - quadCountsB)/timeSlice) * distancePerCountB;
+		}
+	}
 	
 	if(pidCalcA == 1){
 		if(stayCVA == 1)
 		{
-			motorAPid.controlReference = Q15(CVA);
+			motorAPid.controlReference = Q15(CVA / 20);
 		}
 		else
 		{
@@ -259,10 +311,10 @@ void __attribute__((__interrupt__)) _T1Interrupt(void)
 				nextSpeedAReadCounter = lookAhead;
 			}
 			
-			motorAPid.controlReference = Q15(nextSpeedA[nextSpeedAReadCounter]);
+			motorAPid.controlReference = Q15(nextSpeedA[nextSpeedAReadCounter] / 20);
 		}
 		
-		motorAPid.measuredOutput = Q15(measuredSpeedA);
+		motorAPid.measuredOutput = Q15(measuredSpeedA / 20);
 		PID(&motorAPid);
 		outputA = motorAPid.controlOutput;
 		
@@ -287,7 +339,7 @@ void __attribute__((__interrupt__)) _T1Interrupt(void)
 	if(pidCalcB == 1){
 		if(stayCVB == 1)
 		{
-			motorBPid.controlReference = Q15(CVB);
+			motorBPid.controlReference = Q15(CVB / 20);
 		}
 		else
 		{
@@ -302,10 +354,10 @@ void __attribute__((__interrupt__)) _T1Interrupt(void)
 				nextSpeedBReadCounter = lookAhead;
 			}
 			
-			motorBPid.controlReference = Q15(nextSpeedB[nextSpeedBReadCounter]);
+			motorBPid.controlReference = Q15(nextSpeedB[nextSpeedBReadCounter] / 20);
 		}
 		
-		motorBPid.measuredOutput = Q15(measuredSpeedA);
+		motorBPid.measuredOutput = Q15(measuredSpeedB / 20);
 		PID(&motorBPid);
 		outputB = motorBPid.controlOutput;
 		
@@ -316,7 +368,7 @@ void __attribute__((__interrupt__)) _T1Interrupt(void)
 				outputB = -FRACTIONAL_MAX;
 			}
 			
-			outputB = -outputA;
+			outputB = -outputB;
 			dirB = 0;
 		}
 		else
@@ -344,8 +396,8 @@ void __attribute__((__interrupt__)) _T1Interrupt(void)
 	}
 	else
 	{
-		MTR_A_HIGH_CHANNEL = 0;
-		MTR_A_LO_CHANNEL = 0;
+		//MTR_A_HIGH_CHANNEL = 0;
+		//MTR_A_LO_CHANNEL = 0;
 	}
 	
 	if(pidCalcB == 1)
@@ -365,8 +417,8 @@ void __attribute__((__interrupt__)) _T1Interrupt(void)
 	}
 	else
 	{
-		MTR_B_HIGH_CHANNEL = 0;
-		MTR_B_LO_CHANNEL = 0;
+		//MTR_B_HIGH_CHANNEL = 0;
+		//MTR_B_LO_CHANNEL = 0;
 	}
 		
 	IFS0bits.T1IF = 0; 			// Clear timer 1 interrupt flag	
@@ -377,8 +429,22 @@ void __attribute__((__interrupt__)) _U1RXInterrupt(void)
 {
 	//This is test code for initial testing of the recieve
 	//It WILL need to be changed to accomodate
-	char c;
-	c = UART1Data();
+	union {
+		float f;
+		unsigned long ul;
+	} floatInterpret;
+
+	c[3] = UART1Data();
+	c[2] = UART1Data();
+	c[1] = UART1Data();
+	c[0] = UART1Data();
+
+	floatInterpret.ul = ((unsigned long)c[0] << 24) | ((unsigned long)c[1] << 16) | ((unsigned long)c[2] << 8) | (unsigned long)c[3];
+
+	float test = floatInterpret.f;
+
+	testNum++;
+	/*
 	char veloString[20];
 	itoa(veloString,velocity,10);
 	
@@ -403,6 +469,7 @@ void __attribute__((__interrupt__)) _U1RXInterrupt(void)
 		UART1Println("75%");
 		//printf("%d%c%",75,'%');
 	}
+	*/
 
 	IFS0bits.U1RXIF = 0;	//clear the recieve flag
 }
@@ -481,12 +548,12 @@ void InitUART1(void)
 	RP8_O = U1TX_O;
 
 	//Set up UART
-	U1BRG = 95;				//95@7.37MHz = 9600 Baud
+	//U1BRG = 95;				//95@7.37MHz = 9600 Baud
+	U1BRG = 1030;			//1031 @ 79.2MHz = approx. 9600 Baud
 	U1MODE = 0;				//Clear mode to disable UART
 	U1MODEbits.BRGH = 1;	//Set to high precision baud rate generator
 	U1STA = 0;				//Clear the status register
-	U1STAbits.URXISEL = 0;	//Set UART1 to interrupt on each byte RX'd
-	U1STAbits.URXISEL = 0;
+	U1STAbits.URXISEL = 3;	//Set UART1 to interrupt on each byte RX'd
 	IEC0bits.U1RXIE = 1;	//Enable UART1 RX interrupt
 	U1MODEbits.UARTEN = 1;	//Enable UART RX pin
 	U1STAbits.UTXEN = 1;	//Enable UART TX
@@ -543,7 +610,7 @@ void InitTMR1(void)
 	T1CONbits.TGATE = 0; 		// Gated timer accumulation disabled
 	T1CONbits.TCS = 0; 			// use Tcy as source clock
 	T1CONbits.TCKPS = 2; 		// Tcy / 64 as input clock
-	PR1 = 488; 					// Interrupt period = 0.0085 sec with a 64 prescaler
+	PR1 = 5260; 				// Interrupt period = 0.0085 sec with a 64 prescaler
 	IFS0bits.T1IF = 0; 			// Clear timer 1 interrupt flag
 	IEC0bits.T1IE = 1; 			// Enable timer 1 interrupts
 	T1CONbits.TON = 1; 			// Turn on timer 1
@@ -556,13 +623,19 @@ void setup(float diameterA, float diameterB, float spacing, int countsA, int cou
 	wheelDiameterA = diameterA;
 	wheelDiameterB = diameterB;
 	wheelSpacing = spacing;
-	quadCountsA = countsA;
-	quadCountsB = countsB;
+	quadCountsA = countsA * 4;
+	quadCountsB = countsB * 4;
+
+	POS1CNT = 0; 				// Reset position counter
+	MAX1CNT = quadCountsA;
+
+	POS2CNT = 0;
+	MAX2CNT = quadCountsB;
 	
 	float pi = 3.14159;
 	
-	distancePerCountA = (pi * diameterA)/countsA;
-	distancePerCountB = (pi * diameterB)/countsB; 
+	distancePerCountA = (pi * diameterA)/quadCountsA;
+	distancePerCountB = (pi * diameterB)/quadCountsB; 
 }
 
 //**************************************************Movement Functions************************************************************//
@@ -657,7 +730,7 @@ int TrapezoidalMovement(float maxSpeed, float accel, float decel, float distance
 	{
 		if (distanceMetA == 0)
 		{
-			pidCalcA = 0;
+			//pidCalcA = 0;
 			return 0;	// Status = DONE
 		}
 		else
@@ -669,7 +742,7 @@ int TrapezoidalMovement(float maxSpeed, float accel, float decel, float distance
 	{
 		if (distanceMetB == 0)
 		{
-			pidCalcB = 0;
+			//pidCalcB = 0;
 			return 0;	// Status = DONE
 		}
 		else
@@ -681,8 +754,8 @@ int TrapezoidalMovement(float maxSpeed, float accel, float decel, float distance
 	{
 		if ((distanceMetA == 0) && (distanceMetB == 0))
 		{
-			pidCalcA = 0;
-			pidCalcB = 0;
+			//pidCalcA = 0;
+			//pidCalcB = 0;
 			return 0;	// Status = DONE
 		}
 		else

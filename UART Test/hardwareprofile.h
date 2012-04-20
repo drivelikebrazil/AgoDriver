@@ -22,8 +22,8 @@
 #define MTR_AL_PWMTRIS	(TRISBbits.TRISB13)
 #define MTR_AL_PWM_O	(PORTBbits.RB13)
 #define	MTR_A_DUTY_CYCLE	(PDC1)
-#define MTR_A_HIGH_CHANNEL (PWM_CONFbits.PEN1H)
-#define MTR_A_LO_CHANNEL (PWM_CONFbits.PEN1L)
+#define MTR_A_HIGH_CHANNEL (PWM_CONFbits.PEN1L)
+#define MTR_A_LO_CHANNEL (PWM_CONFbits.PEN1H)
 
 #define	MTR_BH_PWMTRIS	(TRISBbits.TRISB14)
 #define	MTR_BH_PWM_O	(PORTBbits.RB14)
@@ -48,8 +48,8 @@
 #define MTR_B_SF_I	PORTBbits.RB3
 
 //PPS Inputs
-#define QEIA_A	6
-#define QEIA_B	5
+#define QEIA_A	5
+#define QEIA_B	6
 #define QEIB_A	10
 #define QEIB_B	11
 
