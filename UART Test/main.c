@@ -256,6 +256,14 @@ int main(void)
 
 	while(1)
 	{
+		if(((packet[3] & INSTRUCTION_MASK) == OPCODE_STOP) && ((packet[3] & FIRST_MASK) == 1))
+		{
+			int motor = packet[3] & MOTOR_MASK;
+			motor = motor >> 1;
+				
+			int cst = packet[3] & LAST_MASK;
+			Stop(cst, motor);
+		}
 		if(packetPosition >= PACKET_SIZE)
 		{
 			currentOpCode = packet[3] & INSTRUCTION_MASK;
@@ -379,7 +387,21 @@ int main(void)
 			}
 			else if((currentOpCode == OPCODE_STOP) && (readyToGo == 1))
 			{
+				int motor = packet[3] & MOTOR_MASK;
+				motor = motor >> 1;
 				
+				int cst = packet[3] & LAST_MASK;
+
+				if((Stop(cst,motor) == 0) && (readyToGo == 1))
+				{
+					packetPosition = 0;
+					UART1AddByte('c');
+				}
+			}
+			else
+			{
+				packetPosition = 0;
+				UART1AddByte('c');
 			}
 		}			
 	}
@@ -1458,8 +1480,12 @@ int Stop(int coast, int motors)
 	{
 		int counter = 0;
 		
-		if (motors != 1)	// Motor A
+		if (motors == 0 || motors == 2)	// Motor A
 		{
+			pidCalcA = 1;
+			stayCVA = 1;
+			CVA = 0;
+			/*
 			if (stickThisInTheBuffer(0, 0) == 0)
 			{
 				return 0;	// Status = DONE;
@@ -1468,9 +1494,14 @@ int Stop(int coast, int motors)
 			{
 				return 1;	// Status = INCOMPLETE
 			}
+			*/
 		}
-		if (motors != 0)	// Motor B
+		if (motors == 1 || motors == 2)	// Motor B
 		{
+			pidCalcB = 1;
+			stayCVB = 1;
+			CVB = 0;
+			/*
 			if (stickThisInTheBuffer(0, 1) == 0)
 			{
 				return 0;	// Status = DONE
@@ -1479,6 +1510,7 @@ int Stop(int coast, int motors)
 			{
 				return 1;	// Status = INCOMPLETE
 			}
+			*/
 		}
 	}
 }
